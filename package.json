@@ -7,7 +7,7 @@
     "start": "node server.js",
     "start:demo": "node scripts/start-demo.js",
     "dev": "nodemon server.js",
-    "test": "node --test \"writeoff/test/*.test.js\" \"test/*.test.js\"",
+    "test": "node scripts/run-tests.js",
     "coverage": "c8 --reporter=text --reporter=lcov npm test",
     "lint:bom": "node scripts/check-bom.js",
     "lint": "eslint .",
