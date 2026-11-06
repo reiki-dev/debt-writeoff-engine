@@ -41,7 +41,7 @@ test('server refuses missing, short, and placeholder JWT secrets', () => {
     const child = spawnSync(process.execPath, ['server.js'], {
       cwd: root,
       encoding: 'utf8',
-      env: { ...process.env, JWT_SECRET: secret, MOCK_MODE: 'true', API_KEY: '' },
+      env: { ...process.env, NODE_ENV: 'test', JWT_SECRET: secret, MOCK_MODE: 'true', API_KEY: '' },
       timeout: 10000,
     });
     assert.equal(child.status, 1, `JWT_SECRET=${JSON.stringify(secret)} stderr: ${child.stderr}`);
