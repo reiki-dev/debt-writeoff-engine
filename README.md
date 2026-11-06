@@ -33,6 +33,16 @@ Then open the write-off tab and try customer `1001`, loan `2001`, target `2500`.
 
 Customer `1002` shows a loan that was sold to a collection agency.
 
+**Preview** — the 16 buckets reconcile to the system debt before anything is allowed; the reduction is spread in priority order; a warning is raised because court costs are touched:
+
+![Write-off preview](docs/img/preview.png)
+
+**After apply** — the write-off is sent, the balance is re-read and compared with the target (audit: `intent` → `applied` → `verified`):
+
+![Write-off applied and verified](docs/img/applied.png)
+
+(The UI text is Czech; the code, logs and docs are English.)
+
 CLI rehearsal (prints the same flow, sends nothing):
 
 ```bash
