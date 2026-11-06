@@ -30,7 +30,7 @@ async function main() {
     console.log(`Demo users created at ${USERS_FILE}`);
   }
 
-  console.log('\n── Správa uživatelů — Portfolio Suite ──\n');
+  console.log('\n── Správa uživatelů — Debt Write-off Engine ──\n');
 
   const username = (await ask('Uživatelské jméno : ')).trim();
   const password = (await ask('Heslo             : ')).trim();

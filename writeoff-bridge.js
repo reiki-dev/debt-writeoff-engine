@@ -1,7 +1,7 @@
 'use strict';
 
 // ----------------------------------------------------------------------------
-// Bridge between portfolio-site settings and the write-off module.
+// Bridge between web server settings and the write-off module.
 //
 // The module reads the environment at require time (see writeoff/src/config.js),
 // so variables must be set before loading it. Keeping this in a separate module

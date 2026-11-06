@@ -1,7 +1,7 @@
 {
   "name": "debt-writeoff-engine",
   "version": "1.0.0",
-  "description": "Financial portfolio dashboard, multi-table loan debt auditor, and idempotent waterfall debt write-off engine",
+  "description": "Debt write-off engine for consumer lending: integer-money waterfall, hard reconciliation guards, audit trail, RBAC web UI and CLI",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

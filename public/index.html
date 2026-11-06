@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Portfolio Engine — Fintech Suite</title>
+<title>Debt Write-off Engine</title>
 <style>
 :root {
   --blue:#185FA5;--blue-l:#E6F1FB;--blue-m:#378ADD;--blue-d:#0C447C;
@@ -317,9 +317,9 @@ td.wdash{color:#B6BCC6;text-align:right}
   <div class="login-card">
     <div class="login-logo">
       <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-      Portfolio Engine — Fintech Suite
+      Debt Write-off Engine
     </div>
-    <div class="login-sub">Portfolio Platform · Internal Tool</div>
+    <div class="login-sub">Back-office tool</div>
     <input class="login-field" type="text"     id="l-user" placeholder="Uživatelské jméno" autocomplete="username" />
     <input class="login-field" type="password" id="l-pass" placeholder="Heslo"             autocomplete="current-password" />
     <button class="login-btn" id="l-btn" onclick="doLogin()">Přihlásit se</button>
@@ -332,7 +332,7 @@ td.wdash{color:#B6BCC6;text-align:right}
     <div>
       <div class="brand no-print">
         <svg width="16" height="16" fill="none" stroke="#fff" stroke-width="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        <span class="no-print">Portfolio</span>
+        <span class="no-print">Debt Write-off</span>
       </div>
       <div class="brand-sub" id="brand-sub">Pouze čtení · data se neukládají do CRM</div>
     </div>
@@ -1365,7 +1365,7 @@ function downloadExcel() {
   const wb = XLSX.utils.book_new();
   const modeName = viewMode === 2 ? 'rozsireny' : 'zakladni';
   XLSX.utils.book_append_sheet(wb, ws, 'Půjčky');
-  XLSX.writeFile(wb, `client-portfolio-report-${cur.customerId}-${modeName}.xlsx`);
+  XLSX.writeFile(wb, `client-loans-report-${cur.customerId}-${modeName}.xlsx`);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
