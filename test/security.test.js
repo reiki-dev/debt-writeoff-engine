@@ -49,6 +49,45 @@ test('server refuses missing, short, and placeholder JWT secrets', () => {
   }
 });
 
+test('login returns a JSON error for malformed JSON and debug is hidden in mock mode', async () => {
+  const oldMode = process.env.MOCK_MODE;
+  const oldApiKey = process.env.API_KEY;
+  const oldSecret = process.env.JWT_SECRET;
+  let server;
+  try {
+    process.env.MOCK_MODE = 'true';
+    process.env.API_KEY = '';
+    process.env.JWT_SECRET = 'security-test-secret-that-is-long-enough';
+    const { app } = require('../server');
+    server = app.listen(0);
+    await new Promise((resolve, reject) => {
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+    const address = server.address();
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const malformed = await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{bad',
+    });
+    assert.equal(malformed.status, 400);
+    assert.deepEqual(await malformed.json(), { error: 'Invalid JSON' });
+
+    const debug = await fetch(`${baseUrl}/debug`);
+    assert.equal(debug.status, 404);
+  } finally {
+    if (server) await new Promise(resolve => server.close(resolve));
+    if (oldMode === undefined) delete process.env.MOCK_MODE;
+    else process.env.MOCK_MODE = oldMode;
+    if (oldApiKey === undefined) delete process.env.API_KEY;
+    else process.env.API_KEY = oldApiKey;
+    if (oldSecret === undefined) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = oldSecret;
+  }
+});
+
 test('esc encodes all HTML-sensitive characters', () => {
   assert.equal(esc(`&<>"'`), '&amp;&lt;&gt;&quot;&#39;');
   assert.equal(esc(null), '');

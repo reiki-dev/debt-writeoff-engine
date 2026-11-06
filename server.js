@@ -8,6 +8,9 @@ const helmet = require('helmet');
 const fs = require('fs');
 const path = require('path');
 
+// bcrypt cost 12, same as scripts/add-user.js; keep in sync so login timing does not reveal unknown users
+const LOGIN_DUMMY_HASH = '$2a$12$waUZWvaTSPZvki8lZUhkleUJIhmjyAg02bwkrx84G3e1N9SN8anBS';
+
 const access = require('./access');
 const writeoff = require('./writeoff-bridge');
 const pipeline = require('./pipeline/src/orchestrator');
@@ -39,7 +42,7 @@ app.use(helmet({
     },
   },
 }));
-app.use(express.json());
+app.use(express.json({ limit: '16kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -203,8 +206,7 @@ app.post('/auth/login', loginLimiter, async (req, res) => {
   }
   const users = loadUsers();
   const user = users.find(u => u.username === username);
-  const dummyHash = '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy';
-  const ok = await bcrypt.compare(password, user ? user.password : dummyHash);
+  const ok = await bcrypt.compare(password, user ? user.password : LOGIN_DUMMY_HASH);
   if (!user) return res.status(401).json({ error: 'Nesprávné přihlašovací údaje' });
   if (!ok) return res.status(401).json({ error: 'Nesprávné přihlašovací údaje' });
 
@@ -840,6 +842,16 @@ app.get('/debug/:customerId', (req, res, next) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+app.use((err, req, res, next) => {
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Invalid JSON' });
+  }
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Request too large' });
+  }
+  next(err);
 });
 
 if (require.main === module) app.listen(PORT, () => {
