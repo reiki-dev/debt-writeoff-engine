@@ -1,24 +1,52 @@
 services:
-  debt-writeoff:
-    build: .
-    container_name: debt-writeoff-engine
-    restart: unless-stopped
-    env_file:
-      - .env
-    # Headless Chromium (Playwright, krok 7-8 pipeline) casto pada na
-    # vychozim malem /dev/shm v Dockeru — bez tohoto by hlaseni bylo matouci
-    # ("Target crashed") a nemelo by nic spolecneho se skutecnou chybou.
-    shm_size: '1gb'
-    volumes:
-      - ./users.json:/app/users.json
-      # Audit odpisu. Drzi idempotenci a zaznamy o neuzavrenych provedenich,
-      # proto musi prezit pre-build obrazu. Bind-mount, ne pojmenovany svazek,
-      # zamerne: tento log potrebujeme umet cist a zalohovat z hostu.
-      - ./audit:/app/audit
-      # Google service-account klic pro zapis do Google Sheets (krok 2
-      # pipeline). Soubor na hostu, cesta uvnitr kontejneru odpovida
-      # GOOGLE_APPLICATION_CREDENTIALS v .env. Read-only — kontejner klic
-      # jen cte.
-      - ./google-service-account.json:/app/google-service-account.json:ro
+  demo:
+    build:
+      context: .
+      args:
+        WITH_BROWSER: "false"
+    command: ["node", "scripts/start-demo.js"]
+    environment:
+      PORT: "3000"
+      USERS_FILE: /app/data/users.json
     ports:
       - "127.0.0.1:3001:3000"
+    volumes:
+      - ./audit:/app/audit
+
+  # Start with --profile app; this service requires a populated .env file.
+  app:
+    profiles: ["app"]
+    build:
+      context: .
+      args:
+        WITH_BROWSER: "false"
+    env_file: .env
+    command: ["node", "server.js"]
+    environment:
+      USERS_FILE: /app/data/users.json
+    ports:
+      - "127.0.0.1:3001:3000"
+    volumes:
+      - ./data:/app/data
+      - ./audit:/app/audit
+
+  # Start with --profile pipeline; this service requires a populated .env file.
+  pipeline:
+    profiles: ["pipeline"]
+    build:
+      context: .
+      args:
+        WITH_BROWSER: "true"
+    env_file: .env
+    command: ["node", "server.js"]
+    environment:
+      USERS_FILE: /app/data/users.json
+      GOOGLE_APPLICATION_CREDENTIALS: /app/google-service-account.json
+    ports:
+      - "127.0.0.1:3001:3000"
+    shm_size: 1gb
+    volumes:
+      - ./data:/app/data
+      - ./audit:/app/audit
+      # Create this service-account file on the host before starting this service.
+      - ./google-service-account.json:/app/google-service-account.json:ro
