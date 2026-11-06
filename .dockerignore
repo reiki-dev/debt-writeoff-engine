@@ -1,13 +1,13 @@
 node_modules
 npm-debug.log
-.env
-.env.*
+.env*
 users.json
+data
+audit/*
+!audit/.gitkeep
+coverage
 .git
 .gitignore
 README.md
-# The audit log is mounted from the host and does not belong in the image.
-audit
-# Google service-account klic pro pipeline (Sheets, krok 2) — prichazi jako
-# read-only bind-mount v docker-compose.yml, do obrazu se nekopiruje.
+# Google service-account credentials are mounted only for the pipeline service.
 google-service-account.json

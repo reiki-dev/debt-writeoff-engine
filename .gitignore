@@ -10,11 +10,14 @@ package-lock.json.log
 *.pem
 *.key
 google-service-account*.json
+users.json
 
 # Runtime & Audit Logs
 *.log
 audit/*
 !audit/.gitkeep
+data/*
+!data/.gitkeep
 
 # OS & Editor
 .DS_Store

@@ -13,6 +13,7 @@ const readline = require('readline');
 const access = require('../access');
 
 const USERS_FILE = path.join(__dirname, '..', 'users.json');
+const DEMO_USERS_FILE = path.join(__dirname, '..', 'users.demo.json');
 
 const ROLE_HELP = {
   admin: 'vše — přehled, odpis, kalendář, správa uživatelů',
@@ -24,6 +25,11 @@ const rl  = readline.createInterface({ input: process.stdin, output: process.std
 const ask = (q) => new Promise(resolve => rl.question(q, resolve));
 
 async function main() {
+  if (!fs.existsSync(USERS_FILE) && fs.existsSync(DEMO_USERS_FILE)) {
+    fs.copyFileSync(DEMO_USERS_FILE, USERS_FILE);
+    console.log(`Demo users created at ${USERS_FILE}`);
+  }
+
   console.log('\n── Správa uživatelů — Portfolio Suite ──\n');
 
   const username = (await ask('Uživatelské jméno : ')).trim();

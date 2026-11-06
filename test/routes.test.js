@@ -11,7 +11,7 @@ const supertest = require('supertest');
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'writeoff-routes-'));
 const usersFile = path.join(tempDir, 'users.json');
 const auditDir = path.join(tempDir, 'audit');
-fs.copyFileSync(path.join(__dirname, '..', 'users.json'), usersFile);
+fs.copyFileSync(path.join(__dirname, '..', 'users.demo.json'), usersFile);
 const users = JSON.parse(fs.readFileSync(usersFile, 'utf8'));
 for (const user of users) user.password = bcrypt.hashSync('route-test-password', 4);
 users.push({ id: 'xss-test-user', username: '<img src=x onerror=1>', role: 'mail', password: bcrypt.hashSync('route-test-password', 4) });

@@ -41,6 +41,14 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const USERS_FILE = process.env.USERS_FILE || path.join(__dirname, 'users.json');
+if (!fs.existsSync(USERS_FILE)) {
+  const demoUsersFile = path.join(__dirname, 'users.demo.json');
+  if (fs.existsSync(demoUsersFile)) {
+    fs.mkdirSync(path.dirname(USERS_FILE), { recursive: true });
+    fs.copyFileSync(demoUsersFile, USERS_FILE);
+    console.log(`Demo users created at ${USERS_FILE}`);
+  }
+}
 const API_BASE = process.env.API_BASE_URL
   || 'https://api.example.test/api/v1.0/export/export';
 const JWT_EXPIRES = process.env.JWT_EXPIRES || '8h';
