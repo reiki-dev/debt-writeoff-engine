@@ -1,24 +1,21 @@
 'use strict';
 
 // ----------------------------------------------------------------------------
-// Vyplneni formulare "Splátkový kalendář" v admin UI pres Playwright.
+// Fill the "Splátkový kalendář" form in the admin UI using Playwright.
 //
-// Upraveno pro headless provoz + screenshot
-// misto "drz okno otevrene, operator klikne Zapsat rucne v prohlizeci":
+// Headless flow with a screenshot instead of leaving a browser open for manual submission:
 //
-//   1. fillCalendarForm()   — headless prihlaseni, vyplneni formulare,
-//      screenshot vraceny volajicimu (orchestrator ho ulozi a nabidne
-//      operatorovi k vizualni kontrole pres GET /calendar-preview.png).
-//      Relace (browser+page) zustava otevrena, klic operationId -> session.
-//   2. confirmCalendarForm() — operator potvrdil screenshot v UI, tady
-//      klikneme Zapsat ve STEJNE jeste otevrene relaci a zavreme prohlizec.
-//   3. cancelCalendarForm()  — zavre relaci bez odeslani (napr. pri chybe
-//      nebo zruseni operace).
+//   1. fillCalendarForm()   — sign in headlessly, fill the form, and return a
+//      screenshot for the orchestrator to save and show for review at
+//      GET /calendar-preview.png. Keep the browser and page open per operationId.
+//   2. confirmCalendarForm() — after the operator confirms the screenshot,
+//      click Submit in the same open session and close the browser.
+//   3. cancelCalendarForm()  — close the session without submitting, e.g. on
+//      error or operation cancellation.
 //
-// NEOVERENO: selektor tlacitka "Zapsat" (input[type=submit][value*=Zapsat])
-// je odhad podle stejneho vzoru jako prihlasovaci tlacitko ("Přihlásit").
-// Drivejsi implementace tento klik nikdy nedelala (cekal na cloveka), takze presny
-// selektor je potreba overit prvnim skutecnym prubehem.
+// UNVERIFIED: selector for the "Zapsat" button (input[type=submit][value*=Zapsat])
+// This is inferred from the same pattern as the login button ("Přihlásit").
+// Verify the exact selector during an actual run.
 // ----------------------------------------------------------------------------
 
 const { config } = require('./config');
@@ -32,34 +29,30 @@ function fmtDate(dateStr) { return `${dateStr} 23:59:00`; }
 // operationId -> { browser, page }
 const sessions = new Map();
 
-// Orez screenshotu na formular jednoho klienta — ne cizi radky pod nim.
+// Crop the screenshot to one customer's form, excluding unrelated rows below it.
 //
-// 1. pokus: element screenshot primo na zvyraznenem radku/bloku formulare
-//    (nejblizsi spolecny ancestor input[name="credit_id"] a
-//    input[name="customer_id"] — na strance admin UI je to typicky <tr>
-//    nebo <table> obalujici cely formular jednoho zaznamu). Element
-//    screenshot se automaticky prizpusobi VYSCE obsahu, takze funguje
-//    stejne dobre pro kalendar o 3 i o 30 splatkach — na rozdil od rucne
-//    pocitaneho bounding boxu, ktery zna jen konkretni pole, ktera jsme
-//    vyplnili, a muze orizeknout tlacitka/pravy sloupec pod/vedle nich.
-// 2. fallback: sjednoceni bounding boxu vyplnenych poli (puvodni pristup) —
-//    pro pripad, ze spolecny ancestor neexistuje nebo je prilis velky
-//    (napr. cela stranka).
-// 3. fallback: cela stranka — porad lepsi nez pad chyby bez obrazku.
+// 1. Try an element screenshot of the form row/block: the closest shared
+//    ancestor of input[name="credit_id"] and input[name="customer_id"] is
+//    typically a <tr> or <table> around one record. It adapts to content height,
+//    so it works for schedules of different lengths. A manually calculated
+//    bounding box may omit buttons or adjacent columns.
+// 2. Fallback: union the bounding boxes of filled fields if the shared ancestor
+//    is missing or too large (for example, the whole page).
+// 3. Fallback: capture the whole page rather than fail without an image.
 async function screenshotFormArea(page, lastRowIndex) {
   try {
     const rowShot = await screenshotHighlightedRow(page);
     if (rowShot) return rowShot;
   } catch {
-    // pokracujeme na dalsi fallback
+    // Continue to the next fallback.
   }
   return screenshotFieldBoundingBox(page, lastRowIndex);
 }
 
-// Najde nejblizsiho spolecneho predka poli credit_id a customer_id (typicky
-// radek/blok formulare zvyrazneny na strance) a vrati jeho element
-// screenshot. Vraci null, pokud se nepodari najit rozumny element (napr.
-// spolecny predek je cely <body>/<html> — to uz by neorizlo vubec nic).
+// Find the nearest common ancestor of the credit_id and customer_id fields
+// (typically the highlighted form row/block) and return its element screenshot.
+// Return null if no suitable element is found, such as when the shared ancestor
+// is the whole <body>/<html> and would not crop anything.
 async function screenshotHighlightedRow(page) {
   const handle = await page.evaluateHandle(() => {
     const a = document.querySelector('input[name="credit_id"]');
@@ -76,19 +69,18 @@ async function screenshotHighlightedRow(page) {
     let common = aAncestors.find((n) => bAncestorSet.has(n));
     if (!common) return null;
 
-    // Pokud je spolecny predek TR, radeji zkusime jeho rodicovsky TABLE jen
-    // tehdy, kdyz TR samo o sobe nemá smysluplnou vysku (0), jinak zustavame
-    // na TR — to je presne ten "jeden radek formulare", co chceme oriznout.
-    // Pokud je spolecny predek prilis vysoko ve strome (BODY/HTML/celý
-    // hlavni obsah), je to znamení, ze pole nejsou v jednom souvislem bloku
-    // — v tom pripade se vzdame a necháme fallback.
+    // If the shared ancestor is a TR, try its parent TABLE only
+    // Only when TR itself has no meaningful height (0); otherwise keep it.
+    // when the TR itself has no meaningful height; otherwise use the single form row.
+    // If the common ancestor is too high in the tree (BODY/HTML/the entire
+    // main content), the fields are not in one continuous block; use fallback.
     const tag = common.tagName;
     if (tag === 'BODY' || tag === 'HTML') return null;
     const rect = common.getBoundingClientRect();
     if (!rect || rect.width < 10 || rect.height < 10) return null;
-    // Sanity: pokud by orez byl skoro cela stranka (>90 % vysky viewportu),
-    // spolecny predek je pravdepodobne obal celeho obsahu, ne jen radku
-    // formulare — necháme radeji fallback na bounding-box pristup.
+    // Sanity check: if the crop is nearly the whole page (>90% of viewport height),
+    // the shared ancestor probably wraps all content instead of just the row.
+    // form; prefer the bounding-box fallback instead.
     if (rect.height > window.innerHeight * 0.9) return null;
     return common;
   });
@@ -105,10 +97,9 @@ async function screenshotHighlightedRow(page) {
   }
 }
 
-// Puvodni pristup: sjednoceni bounding boxu konkretnich vyplnenych poli
-// (credit_id/customer_id, posledni radek rozpisu, poznamka), s malym
-// paddingem. Pouziva se jen jako fallback, kdyz element-screenshot vyse
-// selze — viz komentar u screenshotFormArea.
+// Fallback approach: union the bounding boxes of the fields filled here
+// (credit_id/customer_id, last schedule row, and note), with a small padding.
+// Used only if the element screenshot above fails; see screenshotFormArea.
 async function screenshotFieldBoundingBox(page, lastRowIndex) {
   const selectors = [
     'input[name="credit_id"]',
@@ -140,8 +131,8 @@ async function screenshotFieldBoundingBox(page, lastRowIndex) {
 }
 
 async function fillCalendarForm(operationId, { customerId, creditId, startDate, schedule, note }) {
-  // Lazy require — Playwright/Chromium nemusi byt potreba (a nainstalovany)
-  // ve vsech prostredich, kde se pipeline/src pouziva (napr. testy schedule.js).
+  // Lazy require: Playwright/Chromium may not be needed or installed in every
+  // environment that uses pipeline/src, such as schedule.js tests.
   const { chromium } = require('playwright');
 
   if (sessions.has(operationId)) {
@@ -166,14 +157,13 @@ async function fillCalendarForm(operationId, { customerId, creditId, startDate, 
     await page.click('input[type="submit"][value*="Přihlásit"]');
     await page.waitForLoadState('networkidle');
 
-    // Kontrola, ze login opravdu probehl — jinak CRM na kazdou chranenou URL
-    // (vcetne CREATE_URL) vraci stejnou prihlasovaci stranku, a bez teto
-    // kontroly by se to projevilo matoucim timeoutem az na poli credit_id.
+    // Check that login succeeded; otherwise CRM returns the same login page for
+    // every protected URL (including CREATE_URL), causing a confusing timeout
+    // later at the credit_id field.
     //
-    // Kontrolujeme VIDITELNOST pole "passw", ne pouhou pritomnost v DOM —
-    // autentizovane stranky CRM maji, zda se, nekde skryte stejne pojmenovane
-    // pole (napr. modalni okno zmeny hesla), takze .count() davalo false
-    // positive i po uspesnem loginu.
+    // Check visibility of the "passw" field, not just DOM presence. Authenticated
+    // CRM pages may contain a hidden field with the same name (e.g. a password
+    // change modal), so .count() can give a false positive after login.
     const stillOnLogin = await page.locator('input[name="passw"]').first()
       .isVisible().catch(() => false);
     if (stillOnLogin) {
@@ -205,25 +195,23 @@ async function fillCalendarForm(operationId, { customerId, creditId, startDate, 
       await page.fill('textarea[name="schedule_notes"]', note);
     }
 
-    // Screenshot orezavame jen na radek/blok s tímto formulářem — cela
-    // stranka (fullPage) zobrazuje i uz existujici kalendare ostatnich
-    // klientu pod nim, coz operatorovi jen prekazi (a je to zbytecne
-    // zobrazovani cizich dat). Bounding box pocitame z prvniho a posledniho
-    // vyplneneho pole — funguje bez ohledu na presnou strukturu tabulky.
+    // Crop the screenshot to the row/block containing this form; the whole
+    // A full-page screenshot also shows other customers' existing schedules
+    // below the form. Calculate the bounding box from the first and last fields
+    // filled; this works regardless of the table structure.
     const screenshot = await screenshotFormArea(page, schedule.rows.length - 1);
     return { screenshot };
   } catch (err) {
-    // Diagnostika: pri chybe ulozime screenshot a aktualni URL, JINAK
-    // operator vidi jen "Timeout... waiting for locator(...)" a nevi, na
-    // jake strance se Playwright ve skutecnosti ocitl (spatny login,
-    // presmerovani, jiny tvar formulare apod).
+    // On error, save a screenshot and current URL so the operator can tell which
+    // page Playwright reached (login failure, redirect, changed form, etc.) rather
+    // than seeing only "Timeout... waiting for locator(...)".
     try {
       err.debugScreenshot = await page.screenshot({ fullPage: true });
       err.debugUrl = page.url();
       err.message = `${err.message} [aktualni URL: ${err.debugUrl}]`;
     } catch {
-      // stranka uz nemusi byt pouzitelna (zavreny kontext apod.) — puvodni
-      // chybu tim nezastirame, jen nepridame screenshot.
+      // The page may no longer be usable (e.g. a closed context). Preserve the
+      // original error and omit only the screenshot.
     }
     await closeCalendarSession(operationId);
     throw err;
@@ -240,7 +228,7 @@ async function confirmCalendarForm(operationId) {
   }
   const { page } = session;
   try {
-    // NEOVERENO, viz poznamka v hlavicce souboru.
+    // UNVERIFIED; see the note at the top of this file.
     await page.click('input[type="submit"][value*="Zapsat"]');
     await page.waitForLoadState('networkidle').catch(() => {});
   } finally {

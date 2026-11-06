@@ -40,8 +40,8 @@ async function main() {
   }
   const roleInput = (await ask(`\nRole [${access.DEFAULT_ROLE}] : `)).trim().toLowerCase();
 
-  // Роль спрашиваем явно и не угадываем: опечатка не должна молча выдать
-  // права на отпис. Пустой ответ = самая слабая роль.
+  // Ask for the role explicitly; a typo must not silently grant write-off
+  // permissions. An empty response selects the least privileged role.
   const role = roleInput === '' ? access.DEFAULT_ROLE : roleInput;
   if (!access.ROLES.includes(role)) {
     console.error(`\n❌  Neznámá role "${role}". Povolené: ${access.ROLES.join(', ')}.\n`);

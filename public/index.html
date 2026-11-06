@@ -377,7 +377,7 @@ td.wdash{color:#B6BCC6;text-align:right}
         <!-- Actions -->
         <button class="btn" id="uhrazeno-btn" style="display:none" onclick="togAllUhrazeno()">
           <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
-          <span id="uhrazeno-lbl">Скрыть «Uhrazeno»</span>
+          <span id="uhrazeno-lbl">Skrýt «Uhrazeno»</span>
         </button>
         <div class="act-group">
           <button class="btn" id="edit-btn" onclick="togEdit()">
@@ -871,7 +871,7 @@ function updateActionBtns() {
     const allHidden = U_KEYS.every(k => hcols[k]);
     ub.className = 'btn' + (allHidden ? ' edit-act' : '');
     const lbl = document.getElementById('uhrazeno-lbl');
-    if(lbl) lbl.textContent = allHidden ? 'Показать «Uhrazeno»' : 'Скрыть «Uhrazeno»';
+    if(lbl) lbl.textContent = allHidden ? 'Zobrazit «Uhrazeno»' : 'Skrýt «Uhrazeno»';
   }
   updateCopyBtn();
 }
@@ -1174,7 +1174,7 @@ function render(){
   BASE.forEach(c => {
     const off = hcols[c.k];
     
-    // Строго пустые ячейки для нечисловых колонок и дней просрочки
+    // Keep cells empty for non-numeric columns and overdue days.
     if (!c.num || c.k === 'vprodl') {
       let cls = off ? ' class="col-off"' : '';
       html += '<td' + cls + '>' + (firstCell ? 'Celkem' : '') + '</td>';

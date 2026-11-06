@@ -1,24 +1,24 @@
 'use strict';
 
 // ----------------------------------------------------------------------------
-// Права доступа. Единственное место, где записано, кто что может.
+// Access permissions. The single source of truth for what each role can do.
 //
-// Роль -> список возможностей. Проверяем возможность, а не роль: когда
-// появится четвёртая роль или отпис разделится на «предложить» и «провести»,
-// правится эта таблица, а не десяток условий по коду.
+// Role -> capability list. Check capabilities rather than roles: if another
+// role is added or write-off is split into preview and apply, update this table
+// instead of a dozen conditions throughout the code.
 //
-// Фронт получает свой список из GET /api/me и рисует вкладки по нему —
-// поэтому интерфейс не может разойтись с сервером.
+// The frontend gets its list from GET /api/me and renders tabs from it, keeping
+// the interface aligned with the server.
 //
-// Скрытая вкладка не является защитой. Каждый роут проверяет возможность
-// сам, иначе роль mail дойдёт до отписа обычным curl со своим же токеном.
+// A hidden tab is not security. Every route checks the capability itself;
+// otherwise the mail role could invoke write-off with curl and its own token.
 // ----------------------------------------------------------------------------
 
 const CAPS = {
-  PREHLED: 'prehled',     // просмотр займов клиента (read-only)
-  WRITEOFF: 'writeoff',   // отпис долга — запись в CRM
-  PIPELINE: 'pipeline',   // сплатковый календарь (в разработке)
-  USERS: 'users',         // управление пользователями и debug-роут
+  PREHLED: 'prehled',     // view customer loans (read-only)
+  WRITEOFF: 'writeoff',   // write off debt — writes to CRM
+  PIPELINE: 'pipeline',   // payment schedule (in development)
+  USERS: 'users',         // user management and debug route
 };
 
 const ROLE_CAPS = {
@@ -29,8 +29,8 @@ const ROLE_CAPS = {
 
 const ROLES = Object.keys(ROLE_CAPS);
 
-// Роль по умолчанию — самая слабая. Пользователь без поля role в users.json
-// не должен случайно получить админа, поэтому именно mail, а не admin.
+// The default role is the least privileged. A user without a role field in
+// users.json must not accidentally get admin privileges, so default to mail.
 const DEFAULT_ROLE = 'mail';
 
 function normalizeRole(role) {

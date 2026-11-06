@@ -1,31 +1,29 @@
 'use strict';
 
 // ----------------------------------------------------------------------------
-// Мост между настройками portfolio-сайта и модулем отписа.
+// Bridge between portfolio-site settings and the write-off module.
 //
-// Зачем отдельный файл, а не пара строк в server.js: модуль читает окружение
-// в момент require (см. writeoff/src/config.js), поэтому переменные должны быть
-// выведены ДО того, как он подключится. Отдельный модуль делает этот порядок
-// невозможным нарушить — как бы ни переставляли require в server.js.
+// The module reads the environment at require time (see writeoff/src/config.js),
+// so variables must be set before loading it. Keeping this in a separate module
+// makes the ordering explicit regardless of require order in server.js.
 //
-// Новых секретов не вводим. Ключ и домен берутся из того, что у сайта уже есть:
+// No new secrets are introduced. The key and host come from existing site settings:
 //   API_KEY      -> CRM_API_KEY
-//   API_BASE_URL -> CRM_BASE_URL, но только origin: у сайта в этой
-//                   переменной лежит полный путь до export/export, а модуль
-//                   добавляет пути сам (/api/v1.0/export/export и
-//                   /api/v1.0/special/writeoff). Если передать полный URL,
-//                   получится .../export/export/api/v1.0/special/writeoff.
+//   API_BASE_URL -> CRM_BASE_URL, but use only the origin: the site variable
+//                   contains the full export/export path, and the module adds
+//                   its own paths (/api/v1.0/export/export and
+//                   /api/v1.0/special/writeoff). Passing the full URL would
+//                   produce .../export/export/api/v1.0/special/writeoff.
 //
-// Второй копии ключа в .env быть не должно: одна переменная — одно место,
-// где её нужно менять при ротации.
+// Do not duplicate the key in .env: rotation should require changing one variable.
 // ----------------------------------------------------------------------------
 
 const path = require('node:path');
 
-// Загружаем .env сами. server.js делает это первой строкой, но мост может
-// понадобиться и служебному скрипту — а без .env он бы вывел настройки
-// из пустого окружения и молча пошёл на дефолтный домен без ключа.
-// Повторный вызов безопасен: dotenv не перезаписывает уже заданные переменные.
+// Load .env here as well. server.js does this first, but a utility script may
+// require this bridge directly; without .env it could use empty settings and
+// silently fall back to the default host without a key.
+// Repeated calls are safe: dotenv does not overwrite existing environment values.
 // server.js loads dotenv only when it is launched as the application entry point.
 
 function originOf(url) {
@@ -43,32 +41,29 @@ if (!process.env.CRM_API_KEY && process.env.API_KEY) {
 if (!process.env.CRM_BASE_URL) {
   const derived = originOf(process.env.API_BASE_URL || '');
   if (derived) {
-    // Схему поднимаем до https и НИКОГДА не наследуем http.
+    // Upgrade the scheme to https; NEVER inherit http.
     //
-    // Дашборд исторически читает экспорты по http, и для чтения это работает.
-    // Метод записи по plaintext CRM не отдаёт: POST /api/v1.0/special/writeoff
-    // по http отвечает 500 MethodAccessDenied, причём с именем метода
-    // getWriteoff вместо postWriteoff — то есть запрос даже не доходит до
-    // нужного обработчика. Те же проводки по https проходят (writeoffId
-    // Подтверждено двумя тестовыми проводками на staging.
+    // Export reads may work over http, but write requests require https:
+    // POST /api/v1.0/special/writeoff over http can return 500 MethodAccessDenied
+    // and identify getWriteoff instead of postWriteoff, indicating the request
+    // did not reach the intended handler. Use https for write-off requests.
     //
-    // Отдельно: API-ключ не должен ходить в открытом виде на запросе,
-    // который двигает деньги.
+    // The API key must not be sent in clear text on a request that moves money.
     const secure = derived.replace(/^http:\/\//i, 'https://');
     if (secure !== derived) {
-      console.warn(`[writeoff] API_BASE_URL задан по http — для отписа используется ${secure}`);
+      console.warn(`[writeoff] API_BASE_URL uses http; using ${secure} for write-off requests`);
     }
     process.env.CRM_BASE_URL = secure;
   }
-  // если не вывелось — у модуля свой дефолт на тот же домен по https
+  // If no URL could be derived, the module has its own https default for the same host.
 } else if (/^http:\/\//i.test(process.env.CRM_BASE_URL)) {
-  console.warn('[writeoff] CRM_BASE_URL задан по http — метод записи по plaintext CRM,'
-    + ' скорее всего, отклонит (MethodAccessDenied)');
+  console.warn('[writeoff] CRM_BASE_URL uses http; the CRM write method will likely reject the request'
+    + ' (MethodAccessDenied)');
 }
 
-// Аудит-лог. В контейнере это /app/audit и он ОБЯЗАН быть томом:
-// в нём живёт идемпотентность и записи о незакрытых попытках, и без тома
-// они исчезают при первой пересборке образа. См. docker-compose.yml.
+// Audit log. In the container this is /app/audit and it MUST be a volume:
+// it stores idempotency data and unfinished attempts, which would otherwise be
+// lost when the image is rebuilt. See docker-compose.yml.
 if (!process.env.CRM_AUDIT_DIR) {
   process.env.CRM_AUDIT_DIR = path.join(__dirname, 'audit');
 }

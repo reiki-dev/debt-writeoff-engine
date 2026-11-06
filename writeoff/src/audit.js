@@ -1,19 +1,19 @@
 'use strict';
 
 // ----------------------------------------------------------------------------
-// Аудит — append-only JSONL. Одна операция даёт несколько записей:
-//   intent   -> собираемся отправить (пишется ДО запроса)
-//   applied  -> апи ответил success
-//   failed   -> апи ответил failed / упал запрос
-//   verified -> перечитали баланс, долг стал равен target
-//   mismatch -> перечитали баланс, долг НЕ равен target
+// Audit is append-only JSONL. One operation can produce several records:
+//   intent   -> request is about to be sent (written BEFORE the request)
+//   applied  -> API returned success
+//   failed   -> API returned failed or the request threw an error
+//   verified -> balance reread; debt now equals target
+//   mismatch -> balance reread; debt does NOT equal target
 //
-// Запись intent до запроса — не формальность: если процесс умрёт между
-// отправкой и ответом, в логе останется след, и повторный запуск увидит
-// незакрытую операцию, а не «ничего не было».
+// Writing intent before the request matters: if the process stops between
+// sending the request and receiving its response, the log shows an unfinished
+// operation instead of making it appear that nothing happened.
 //
-// Идемпотентность держится здесь же, потому что в configured balance export нет поля,
-// по которому можно надёжно понять «этот конкретный отпис уже проведён».
+// Idempotency is tracked here because the configured balance export has no
+// field that reliably indicates whether a specific write-off was applied.
 // ----------------------------------------------------------------------------
 
 const fs = require('node:fs');
@@ -37,7 +37,7 @@ async function append(entry, { dir = config.AUDIT_DIR } = {}) {
     pid: process.pid,
     ...entry,
   };
-  // flag 'a' + одна строка = атомарная дозапись в пределах пишущего процесса
+  // flag 'a' + one line = atomic append within the writing process
   await fsp.appendFile(auditPath(dir), `${JSON.stringify(record)}\n`, 'utf8');
   return record;
 }
@@ -52,26 +52,26 @@ async function readAll({ dir = config.AUDIT_DIR } = {}) {
     try {
       out.push(JSON.parse(line));
     } catch {
-      // битую строку не роняем весь лог, но и не прячем
+      // A malformed line does not invalidate the whole log, but is not hidden.
       out.push({ ts: null, event: 'corrupt_line', line: i + 1, raw: line.slice(0, 500) });
     }
   }
   return out;
 }
 
-// Всё, что известно про этот ключ идемпотентности.
+// Everything known about this idempotency key.
 async function history(key, opts = {}) {
   const all = await readAll(opts);
   return all.filter((entry) => entry.idempotencyKey === key);
 }
 
-// Была ли уже успешная проводка с этим ключом.
+// Whether a write-off with this key has already succeeded.
 async function findApplied(key, opts = {}) {
   const entries = await history(key, opts);
   return entries.find((entry) => entry.event === 'applied') || null;
 }
 
-// Есть ли незакрытый intent (отправили и не узнали результат).
+// Whether there is an unfinished intent (sent, but no result received).
 async function findDangling(key, opts = {}) {
   const entries = await history(key, opts);
   const intents = entries.filter((entry) => entry.event === 'intent');

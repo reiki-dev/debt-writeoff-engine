@@ -1,158 +1,158 @@
 # @fintech/writeoff
 
-Модуль отписа долга CRM. Без интерфейса: библиотека + CLI.
+CRM debt write-off module. No user interface: library + CLI.
 
-Умеет ровно одно, но целиком: прочитать остатки по кредиту, разложить нужную
-сумму по корзинам в заданной иерархии, проверить это набором гардов, отправить
-проводку в `special/writeoff` и убедиться, что долг стал таким, как задумано.
+It does one thing end to end: reads a credit's balances, allocates the required
+amount across buckets in the defined order, checks the result with guards, sends
+the transaction to `special/writeoff`, and verifies that the debt reached its target.
 
 ```
-npm test        # 43 теста, без сети
+npm test        # 43 tests, no network
 node bin/cli.js help
 ```
 
-Зависимостей нет — только Node ≥ 18.17 (нужен глобальный `fetch`).
+There are no dependencies beyond Node ≥ 18.17 (global `fetch` is required).
 
-## Как считается отпис
+## How write-off amounts are calculated
 
-На входе всегда **target** — сколько долга должно **остаться**. Сумма к отпису
-выводится как `debt − target` и раскладывается по корзинам сверху вниз:
+The input is always **target**: the amount of debt that should **remain**. The
+write-off amount is `debt − target`, allocated across buckets from top to bottom:
 
 ```
 tax12 → tax11 → tax10 → tax9 → tax8 → tax7 → tax6 → tax2 → tax3 → tax4 → tax5 → tax1
       → charge → cinterest → late_fee → amount
 ```
 
-Каждая корзина гасится до своего остатка, последняя задетая — частично.
-Остатки читаются из столбцов с префиксами `l_` / `r_` (остаток, а не начисление):
+Each bucket is cleared up to its remaining balance; the last affected bucket is
+reduced only partially. Balances are read from columns prefixed with `l_` / `r_`
+(remaining balance, not the amount charged):
 
-| корзина | столбец | что это |
+| bucket | column | meaning |
 |---|---|---|
-| tax1…tax12 | `l_tax1`…`l_tax12` | таксы |
+| tax1…tax12 | `l_tax1`…`l_tax12` | taxes |
 | cinterest | `l_cinterest` | zákonný úrok z prodlení |
 | late_fee | `l_late_fee` | sml. pokuta |
-| charge | `l_interest` | Cena / náklady — да, именно так, см. ниже |
-| amount | `l_amount` | тело кредита |
+| charge | `l_interest` | Cena / náklady — see explanation below |
+| amount | `l_amount` | loan principal |
 
-Вся эта карта живёт в одном файле — `src/buckets.js`. Больше её нигде нет.
+This mapping is defined in one place: `src/buckets.js`.
 
-## Два известных расхождения, о которых надо знать
+## Two known discrepancies
 
-**1. `tax11` и `tax12` есть в модуле, но не в опубликованной спеке.** Таблица
-параметров `postWriteoff()` перечисляет только `tax1..tax10`. На инсталляции
-На боевой инсталляции эти два поля включили отдельно (подтверждено оператором staging),
-поэтому в `PAYLOAD_FIELD` они присутствуют, а спека в этой части устарела.
-Не убирайте их, сверившись с PDF — сначала выясните, не отключили ли поля
-обратно.
+**1. `tax11` and `tax12` are supported by this module but are absent from the
+published specification.** The `postWriteoff()` parameter table lists only
+`tax1..tax10`. These fields may be enabled in a CRM installation, so they are
+included in `PAYLOAD_FIELD`. Confirm their current availability before removing
+them based on the PDF specification.
 
-Если поля всё-таки не принимаются, апи, скорее всего, ответит `success`, молча
-проигнорировав неизвестные параметры. Ловится это не гардом, а пост-верификацией:
-после проводки баланс перечитывается, долг окажется больше target, и операция
-получит статус `applied_unverified` с ненулевой `delta`. Ровно на эту величину
-и не примутся tax11/tax12.
+If the fields are not accepted, the API may still return `success` while silently
+ignoring unknown parameters. Post-write verification detects this: it reads the
+balance again, and if the debt is above target, the operation gets status
+`applied_unverified` with a nonzero `delta`. The difference corresponds to the
+unapplied `tax11` / `tax12` amounts.
 
-Механизм гарда при этом остался рабочим: `API_UNSUPPORTED` вычисляется из
-`PAYLOAD_FIELD`, а не задаётся списком. Уберите поле из карты — соответствующая
-корзина снова станет непроводимой, и `api_unsupported_bucket` включится сам.
+The guard mechanism still works: `API_UNSUPPORTED` is derived from
+`PAYLOAD_FIELD`, rather than maintained as a separate list. Removing a field
+from the mapping makes its bucket non-writable and activates
+`api_unsupported_bucket` automatically.
 
-**2. Остаток `charge` читается из `l_interest`, а не из `r_charge`.** Лейблы
-столбцов у вендора здесь не совпадают со смыслом, и это стоило одной ошибки.
+**2. The remaining `charge` balance is read from `l_interest`, not `r_charge`.**
+The column labels do not match their meanings in this case, which can lead to an
+incorrect balance mapping.
 
-Изначально источником был `r_charge` — по названию он выглядит остатком Cena.
-Staging test bookings showed the same behavior:
+`r_charge` may look like the remaining Cena balance based on its name. Test
+transactions showed the following behavior:
 
 ```
-до отписа      debt 5200.00   r_charge 200.00   l_interest 200.00
-отписали       charge 200.00  → принято, debt упал на все 200.00
-после отписа   debt 5000.00 = l_amount,  r_charge ВСЁ ЕЩЁ 200.00
+before write-off  debt 5200.00   r_charge 200.00   l_interest 200.00
+write-off        charge 200.00  → accepted; debt decreased by 200.00
+after write-off  debt 5000.00 = l_amount; r_charge still 200.00
 ```
 
-`r_charge` при отписе не уменьшается — это начисленная сумма. Второе
-Staging confirmation shows that accrued `r_charge` may exceed current `debt`,
-остаток не может быть больше долга.
+`r_charge` does not decrease after a write-off: it is the amount charged.
+Additional observations show that accrued `r_charge` may exceed current `debt`,
+while a remaining balance cannot exceed the debt.
 
-Ловушка в том, что пока по Cena ничего не погашено, `l_interest` и `r_charge`
-равны, сумма корзин сходится с `debt`, и подмена столбца никак не проявляется.
-Расхождение вылезает только после первого частичного погашения — что и
-произошло на третьей проводке подряд.
+Until part of the Cena has been repaid, `l_interest` and `r_charge` are equal,
+so the bucket sum matches `debt` and a wrong column mapping is not apparent.
+The discrepancy appears after the first partial repayment.
 
-Поймал это `debt_mismatch`, а не тесты и не ревью: единственная проверка,
-которая сравнивает нашу модель долга с системной. Сейчас на месте прежнего
-предупреждения стоит настоящий инвариант — `charge_source_suspicious` срабатывает,
-если остаток Cena превысил начисленное. А `probe` печатает блок «Справочно»
-с `charge`, `o_charge`, `r_charge`, `interest`, `o_interest`, `l_interest`,
-чтобы этот класс вопросов закрывался глазами за секунду.
+The `debt_mismatch` guard compares the module's debt model with the system debt.
+The `charge_source_suspicious` guard also fires if the remaining Cena exceeds
+the amount charged. `probe` prints a “Reference” section with `charge`,
+`o_charge`, `r_charge`, `interest`, `o_interest`, and `l_interest` to help
+inspect this type of discrepancy.
 
-## Главный гард: сверка с системным долгом
+## Main guard: reconciliation with system debt
 
-Перед любой проводкой модуль складывает остатки по всем 16 корзинам и сравнивает
-сумму с системным `debt`. Расходится хоть на копейку — `debt_mismatch`, отправка
-запрещена, и снять это флагом `--force` нельзя.
+Before any write-off, the module sums the remaining balances in all 16 buckets
+and compares the result with system `debt`. Any difference triggers
+`debt_mismatch`; the request is blocked, and `--force` cannot bypass it.
 
-Смысл в том, что это единственная проверка, которая ловит **все** ошибки карты
-столбцов сразу: не тот столбец, переименованный вендором столбец, забытая
-корзина, остаток, уехавший в `l_interest` или `l_administrative_fee`. Раскладка
-может выглядеть идеально и при неверной карте — а сумма не сойдётся.
+This is the only check that catches **all** column mapping errors at once:
+the wrong column, a renamed vendor column, an omitted bucket, or a balance
+stored in `l_interest` or `l_administrative_fee`. An allocation may look correct
+with a wrong mapping, but the totals will not reconcile.
 
-Поэтому же модуль по умолчанию запрашивает `format=assoc` и резолвит столбцы по
-имени. Экспорт умеет отдавать и плоские массивы, где соответствие держится
-только на порядке ключей в `data.names`; такой режим поддержан, но при любом
-расхождении длины строки и числа имён бросает ошибку вместо того, чтобы
-«дочитать что есть». Сдвиг на один элемент в позиционном формате даёт неверную
-сумму внутри правильно выглядящего отчёта — худший вид ошибки в этой задаче.
+For this reason, the module requests `format=assoc` by default and resolves
+columns by name. The export can also return flat arrays, where values are mapped
+by the order of keys in `data.names`. This format is supported, but a mismatch
+between a row's length and the number of names raises an error. An offset of one
+element in positional format can produce an incorrect total in an otherwise
+plausible report.
 
-## Гарды целиком
+## Guard reference
 
-| код | severity | когда |
+| code | severity | condition |
 |---|---|---|
-| `debt_mismatch` | error, не снимается force | сумма корзин ≠ `debt` |
-| `api_unsupported_bucket` | error, не снимается force | водопад задел корзину без поля в контракте (сейчас таких нет) |
-| `target_invalid` | error, не снимается force | target не целый или отрицательный |
+| `debt_mismatch` | error, cannot be forced | bucket sum ≠ `debt` |
+| `api_unsupported_bucket` | error, cannot be forced | waterfall affects a bucket without a contract field (none currently) |
+| `target_invalid` | error, cannot be forced | target is not an integer or is negative |
 | `nothing_to_write_off` | error | `debt ≤ target` |
-| `insufficient_capacity` | error | корзин не хватает на target |
-| `missing_columns` | warning | столбца нет в экспорте |
-| `court_costs_included` | warning | в отпис попали tax9/tax10 |
-| `charge_source_suspicious` | warning | остаток Cena больше начисленного |
-| `prior_writeoff` | warning | по кредиту уже были отписы |
+| `insufficient_capacity` | error | bucket balances cannot reach the target |
+| `missing_columns` | warning | column is missing from the export |
+| `court_costs_included` | warning | tax9/tax10 are included in the write-off |
+| `charge_source_suspicious` | warning | remaining Cena exceeds the amount charged |
+| `prior_writeoff` | warning | the credit has prior write-offs |
 | `debt_r_debt_mismatch` | warning | `debt` ≠ `r_debt` |
-| `flag_sold`, `flag_archive` | warning | кредит продан / в архиве |
+| `flag_sold`, `flag_archive` | warning | credit is sold / archived |
 
-## Аудит
+## Audit
 
-Аудит-лог — JSONL в `CRM_AUDIT_DIR`, пишется всегда. Ключ идемпотентности —
-sha256 от `customerId + creditId + debt + target + раскладка`; познамка и дата
-в него не входят, иначе повтор с другим текстом выглядел бы новой проводкой.
+The audit log is JSONL in `CRM_AUDIT_DIR` and is always written. The idempotency
+key is the sha256 of `customerId + creditId + debt + target + allocation`;
+notes and date are excluded so that changing the text does not create a new
+write-off key.
 
-**Отказ при повторной проводке выключен по умолчанию** (`CRM_IDEMPOTENCY_GUARD`).
-Причины две. CRM сам не даёт провести один и тот же отпис дважды —
-компоненты уже погашены, и API отвечает `invalidAmount`; верхняя система здесь
-авторитет. А ключ считается от суммы долга, поэтому после настоящей проводки он
-меняется сам: совпасть он может только если кредит вернули в прежнее состояние,
-то есть на тестах, где эта проверка мешает и ничего не защищает.
+**Blocking repeated write-offs is disabled by default** (`CRM_IDEMPOTENCY_GUARD`).
+The CRM rejects a repeated write-off when the components have already been paid,
+returning `invalidAmount`. The key also includes the debt amount, so it changes
+after a successful write-off. A matching key can occur if the credit returns to
+its previous state, such as in tests.
 
-Включить обратно — `CRM_IDEMPOTENCY_GUARD=true`; тогда `applyPlan` вернёт
-`already_applied` или `dangling_intent`, а `force: true` снимет этот отказ.
-Флаг отделён от `force` намеренно: `force` снимает гарды данных, и «дай
-повторить» не должно незаметно означать ещё и «игнорируй проверки».
+Enable it with `CRM_IDEMPOTENCY_GUARD=true`; then `applyPlan` returns
+`already_applied` or `dangling_intent`, and `force: true` bypasses this block.
+The flag is separate from `force`: `force` bypasses data guards, and allowing a
+retry should not silently mean that data checks are ignored too.
 
-Одна операция оставляет цепочку записей:
+One operation leaves a chain of records:
 
 ```
-intent    записывается ДО запроса
-applied   апи ответил success
-failed    апи ответил failed либо запрос упал
-verified  перечитали баланс: долг равен target
-mismatch  перечитали баланс: долг НЕ равен target
+intent    written BEFORE the request
+applied   API returned success
+failed    API returned failed or the request threw an error
+verified  balance reread: debt equals target
+mismatch  balance reread: debt does NOT equal target
 ```
 
-`intent` до запроса — не формальность. Если процесс умрёт между отправкой и
-ответом, в логе останется незакрытая попытка, и повторный запуск вернёт
-`dangling_intent` с требованием проверить кредит руками, а не отправит вторую
-проводку.
+Writing `intent` before the request matters. If the process stops between
+sending the request and receiving the response, the log contains an unfinished
+attempt. A retry returns `dangling_intent` and requires a manual credit check
+instead of sending a second write-off.
 
-Успешный ответ API не считается результатом: после `applied` баланс
-перечитывается, и если долг не стал равен target, операция помечается
-`applied_unverified`, а CLI выходит с кодом 2.
+A successful API response is not enough: after `applied`, the balance is read
+again. If the debt does not equal target, the operation is marked
+`applied_unverified` and the CLI exits with code 2.
 
 ## CLI
 
@@ -160,28 +160,28 @@ mismatch  перечитали баланс: долг НЕ равен target
 export CRM_API_KEY=...
 export CRM_ACTOR=demo_operator
 
-# какие кредиты есть у клиента и где долг
+# list the customer's credits and their balances
 node bin/cli.js probe --customer 1001
 
-# разбор одного кредита по корзинам + сверка с debt
+# inspect one credit's buckets and reconcile with debt
 node bin/cli.js probe --customer 1001 --credit 2001
 
-# что будет списано (ничего не отправляет)
+# preview the write-off (sends nothing)
 node bin/cli.js preview --customer 1001 --credit 2001 --target 25000
 
-# dry-run: печатает готовое тело запроса, но не отправляет
+# dry-run: print the prepared request body without sending it
 node bin/cli.js apply --customer 1001 --credit 2001 --target 25000
 
-# реальная проводка
+# apply the write-off
 node bin/cli.js apply --customer 1001 --credit 2001 --target 25000 --live \
   --notes "staging - mam DoN, splatkovy kalendar"
 ```
 
-`probe` стоит прогнать на первом же боевом кредите до всего остального: он
-печатает все корзины, их сумму, `debt` и расхождение — то есть сразу
-показывает, верна ли карта столбцов.
+Run `probe` on an initial live credit before other operations. It prints every
+bucket, their sum, `debt`, and the difference, showing whether the column map is
+correct.
 
-## Как использовать из кода
+## Using the module from code
 
 ```js
 const { buildPlan, applyPlan, formatPlan } = require('@fintech/writeoff');
@@ -189,45 +189,48 @@ const { buildPlan, applyPlan, formatPlan } = require('@fintech/writeoff');
 const plan = await buildPlan({
   customerId: 1001,
   creditId: 2001,
-  target: 25000,                    // в korunách
+  target: 25000,                    // in crowns
   notes: 'staging - mam DoN',
 });
 
 console.log(formatPlan(plan));
-if (!plan.ok) return plan;          // гарды заблокировали — дальше нельзя
+if (!plan.ok) return plan;          // guards blocked the plan; stop here
 
 const result = await applyPlan(plan, { live: true, actor: 'demo_operator' });
 // result.status: applied | applied_unverified | already_applied | dangling_intent | dry_run
 ```
 
-`buildPlan` не имеет побочных эффектов: план можно построить, показать оператору,
-сохранить и применить позже. Именно это разделение и делает модуль пригодным
-и как шаг пайплайна, и как отдельный экран.
+`buildPlan` has no side effects: a plan can be built, shown to an operator,
+saved, and applied later. This separation makes the module suitable both as a
+pipeline step and as a standalone screen.
 
-`computePlan` — та же логика, но чистой функцией от готового `Balance`, без
-сети: удобно для тестов и для пересчёта плана на уже прочитанных данных.
+`computePlan` applies the same logic as a pure function of an existing `Balance`,
+without network access. It is useful for tests and recalculating a plan from
+data that has already been read.
 
-## Настройки
+## Configuration
 
-Всё через окружение, ключ в коде не лежит никогда. См. `.env.example`.
+All configuration comes from the environment; the key is never stored in code.
+See `.env.example`.
 
-Два переключателя стоит отметить отдельно:
+Two settings are worth calling out:
 
-- `CRM_AUTH_MODE` — `header` (x-api-key, как просит спека) или `query`
-  (`?apiKey=`). По умолчанию `header`.
-- `CRM_WRITEOFF_TRANSPORT` — `body` или `query`. Спека таблицей параметров
-  не различает query и body; по умолчанию `body`, как в прежнем рабочем коде.
-  Если окажется наоборот, это одна переменная окружения, а не правка кода.
+- `CRM_AUTH_MODE` — `header` (x-api-key, as specified) or `query`
+  (`?apiKey=`). The default is `header`.
+- `CRM_WRITEOFF_TRANSPORT` — `body` or `query`. The parameter table in the
+  specification does not distinguish query from body. The default is `body`.
+  If the other transport is required, change this environment variable rather
+  than the code.
 
-## Что осталось открытым
+## Open questions
 
-- Транспорт параметров отписа (`body` против `query`) — проверяется первой же
-  проводкой на безопасном `credit_id`.
-- Не осталось ли других столбцов с той же болезнью, что у `r_charge`. Пока
-  каждое расхождение ловится `debt_mismatch`, но дешевле найти их заранее:
-  прогнать `probe` на кредитах, где по каждой корзине есть частичное погашение.
-- `l_administrative_fee`, `l_penalty`, `l_percent` в водопад не входят. На
-  проверенных кредитах они нулевые; если где-то окажутся ненулевыми,
-  `debt_mismatch` заблокирует проводку и покажет их в отчёте — тогда нужно
-  решать, какими полями writeoff их гасить (`administrative_fee`, `penalty`
-  в контракте есть).
+- The write-off parameter transport (`body` versus `query`) should be checked
+  with the first transaction on a safe `credit_id`.
+- Check whether other columns have the same issue as `r_charge`. Any discrepancy
+  is caught by `debt_mismatch`, but it is preferable to run `probe` on credits
+  with partial repayments in each bucket in advance.
+- `l_administrative_fee`, `l_penalty`, and `l_percent` are not part of the
+  waterfall. They are zero in the credits checked so far. If any are nonzero,
+  `debt_mismatch` blocks the write-off and shows them in the report; determine
+  which write-off fields should clear them (`administrative_fee` and `penalty`
+  are present in the contract).

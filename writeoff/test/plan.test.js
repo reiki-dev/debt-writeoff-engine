@@ -19,7 +19,7 @@ function codes(plan) {
   return plan.findings.map((f) => f.code);
 }
 
-test('баланс собирает корзины и сходится с debt', () => {
+test('balance collects buckets and reconciles with debt', () => {
   const balance = balanceOf({
     l_tax8: '2000.00', l_tax6: '1500.00', l_late_fee: '2208.00', l_amount: '10000.00',
   });
@@ -32,11 +32,11 @@ test('баланс собирает корзины и сходится с debt',
   assert.equal(balance.customerId, '1001');
 });
 
-test('план раскладывает (debt - target) сверху вниз', () => {
+test('plan allocates (debt - target) from top to bottom', () => {
   const balance = balanceOf({
     l_tax8: '2000.00', l_late_fee: '2208.00', l_cinterest: '705.33', l_amount: '20000.00',
   });
-  // debt = 24913.33, оставить хотим 20000.00 -> отписать 4913.33
+  // debt = 24913.33; target is 20000.00 -> write off 4913.33
   const plan = computePlan({ balance, target: toMinor('20000.00') });
 
   assert.equal(fromMinor(plan.amount), '4913.33');
@@ -49,7 +49,7 @@ test('план раскладывает (debt - target) сверху вниз', 
   assert.deepEqual(codes(plan), []);
 });
 
-test('дойдя до тела, режет его частично', () => {
+test('partially reduces principal when the allocation reaches it', () => {
   const balance = balanceOf({ l_tax2: '500.00', l_amount: '30000.00' });
   const plan = computePlan({ balance, target: toMinor('25000.00') });
 
@@ -60,8 +60,8 @@ test('дойдя до тела, режет его частично', () => {
   assert.equal(plan.ok, true);
 });
 
-test('расхождение суммы корзин с debt блокирует наглухо', () => {
-  // 480.00 сидит в l_administrative_fee — в водопад он не входит
+test('a bucket sum mismatch with debt blocks the plan', () => {
+  // 480.00 is in l_administrative_fee, which is outside the waterfall.
   const balance = balanceOf({
     l_amount: '10000.00', l_administrative_fee: '480.00', debt: '10480.00',
   });
@@ -74,7 +74,7 @@ test('расхождение суммы корзин с debt блокирует 
   assert.match(finding.message, /l_administrative_fee=480\.00/);
 });
 
-test('tax11/tax12 проводятся — поля включены на инсталляции', () => {
+test('tax11/tax12 are applied when fields are enabled in the installation', () => {
   const balance = balanceOf({ l_tax12: '654.00', l_tax11: '400.00', l_amount: '10000.00' });
   const plan = computePlan({ balance, target: toMinor('10000.00') });
 
@@ -88,31 +88,30 @@ test('tax11/tax12 проводятся — поля включены на инс
   assert.equal(payload.tax11, '400.00');
 });
 
-test('каждая корзина иерархии имеет поле в контракте writeoff', () => {
-  // Инвариант: ORDER и PAYLOAD_FIELD не расходятся. Если однажды разойдутся,
-  // guard api_unsupported_bucket включится сам — но пусть об этом скажет тест,
-  // а не боевая проводка.
+test('every bucket in the hierarchy has a field in the writeoff contract', () => {
+  // Invariant: ORDER and PAYLOAD_FIELD stay aligned. If they diverge,
+  // api_unsupported_bucket activates; let this test catch it before a live write-off.
   assert.deepEqual(API_UNSUPPORTED, []);
   for (const bucket of ORDER) {
-    assert.ok(PAYLOAD_FIELD[bucket], `у корзины ${bucket} нет поля в PAYLOAD_FIELD`);
+    assert.ok(PAYLOAD_FIELD[bucket], `bucket ${bucket} has no field in PAYLOAD_FIELD`);
   }
 });
 
-test('корзина вне иерархии не может тихо выпасть из запроса', () => {
+test('a bucket outside the hierarchy cannot be silently omitted from the request', () => {
   assert.throws(
     () => buildPayload({ customerId: 1, creditId: 2, allocation: { tax13: 100 } }),
-    /вне иерархии: tax13/,
+    /outside the hierarchy: tax13/,
   );
 });
 
-test('недостижимый target ловится до отправки', () => {
+test('an unreachable target is caught before sending', () => {
   const balance = balanceOf({ l_amount: '1000.00' });
   const plan = computePlan({ balance, target: 0 });
   assert.equal(plan.shortfall, 0);
   assert.equal(plan.ok, true);
 
-  // Корзины меньше долга — значит, они описывают его не полностью.
-  // Такой случай ловится сразу двумя гардами: и по ёмкости, и по сверке с debt.
+  // Bucket balances are below the debt, so they do not represent it fully.
+  // Both capacity and debt reconciliation guards catch this case.
   const broken = balanceOf({ l_amount: '1000.00', debt: '5000.00' });
   const brokenPlan = computePlan({ balance: broken, target: 0 });
   assert.ok(codes(brokenPlan).includes('insufficient_capacity'));
@@ -120,7 +119,7 @@ test('недостижимый target ловится до отправки', () 
   assert.equal(brokenPlan.ok, false);
 });
 
-test('долг не больше target — отписывать нечего', () => {
+test('nothing to write off when debt is at or below target', () => {
   const balance = balanceOf({ l_amount: '20000.00' });
   const plan = computePlan({ balance, target: toMinor('25000.00') });
 
@@ -129,7 +128,7 @@ test('долг не больше target — отписывать нечего', 
   assert.equal(plan.ok, false);
 });
 
-test('судебные расходы отписываются, но с предупреждением', () => {
+test('court costs can be written off, but produce a warning', () => {
   const balance = balanceOf({ l_tax10: '1500.00', l_tax9: '2000.00', l_amount: '5000.00' });
   const plan = computePlan({ balance, target: toMinor('5000.00') });
 
@@ -137,27 +136,27 @@ test('судебные расходы отписываются, но с пред
   assert.equal(fromMinor(plan.allocation.tax9), '2000.00');
   const warn = plan.findings.find((f) => f.code === 'court_costs_included');
   assert.equal(warn.severity, 'warning');
-  assert.equal(plan.ok, true);            // предупреждение не блокирует
+  assert.equal(plan.ok, true);            // Warning does not block the plan.
 });
 
-test('остаток Cena больше начисленного — источник столбца под вопросом', () => {
-  // l_interest (остаток) = 1750, r_charge (начислено) = 0 — так быть не может
+test('remaining Cena greater than amount charged suggests a wrong source column', () => {
+  // l_interest (remaining) = 1750, r_charge (charged) = 0; this is impossible.
   const balance = balanceOf({ l_amount: '5000.00', l_interest: '1750.00', r_charge: '0.00' });
   const plan = computePlan({ balance, target: toMinor('1000.00') });
   assert.ok(codes(plan).includes('charge_source_suspicious'));
 
-  // а нормальная ситуация «часть Cena погашена» подозрений не вызывает
+  // A normal case where part of Cena was repaid does not trigger suspicion.
   const healthy = balanceOf({ l_amount: '5000.00', l_interest: '300.00', r_charge: '500.00' });
   const healthyPlan = computePlan({ balance: healthy, target: toMinor('1000.00') });
   assert.ok(!codes(healthyPlan).includes('charge_source_suspicious'));
   assert.ok(!codes(healthyPlan).includes('debt_mismatch'));
 });
 
-test('регрессия: три исторических состояния займа сходятся с debt', () => {
+test('regression: three credit states reconcile with debt', () => {
   // Three test-booking states exercise r_charge as the charge source.
   const states = [
     {
-      label: 'до первой проводки (debt 5500.00)',
+      label: 'before first write-off (debt 5500.00)',
       columns: {
         l_tax12: '400.00', l_tax11: '300.00', l_tax10: '700.00', l_tax5: '600.00',
         l_tax2: '300.00', l_cinterest: '200.00', l_late_fee: '500.00',
@@ -166,7 +165,7 @@ test('регрессия: три исторических состояния з�
       debt: '5500.00',
     },
     {
-      label: 'после отписа 1000.00 (debt 4500.00)',
+      label: 'after write-off 1000.00 (debt 4500.00)',
       columns: {
         l_tax10: '300.00', l_tax5: '600.00', l_tax2: '300.00',
         l_cinterest: '200.00', l_late_fee: '500.00',
@@ -175,7 +174,7 @@ test('регрессия: три исторических состояния з�
       debt: '4500.00',
     },
     {
-      label: 'после отписа 2000.00 (debt 2500.00) — r_charge не уменьшился',
+      label: 'after write-off 2000.00 (debt 2500.00) — r_charge did not decrease',
       columns: {
         l_interest: '0.00', r_charge: '350.00', l_amount: '2500.00', writeoff: '3001.00',
       },
@@ -186,19 +185,19 @@ test('регрессия: три исторических состояния з�
   for (const state of states) {
     const balance = balanceOf(state.columns);
     assert.equal(fromMinor(balance.debt), state.debt, state.label);
-    assert.equal(balance.bucketSum, balance.debt, `${state.label}: сумма корзин не сошлась`);
+    assert.equal(balance.bucketSum, balance.debt, `${state.label}: bucket sum did not reconcile`);
     const plan = computePlan({ balance, target: 0 });
     assert.ok(!codes(plan).includes('debt_mismatch'), `${state.label}: debt_mismatch`);
   }
 
-  // последнее состояние: target 0 отписывает ровно тело и ничего больше
+  // Last state: target 0 writes off principal only.
   const last = computePlan({ balance: balanceOf(states[2].columns), target: 0 });
   assert.equal(fromMinor(last.amount), '2500.00');
   assert.deepEqual(Object.keys(last.allocation), ['amount']);
   assert.equal(last.ok, true);
 });
 
-test('уже проведённые отписы попадают в предупреждения', () => {
+test('prior write-offs are included in warnings', () => {
   const balance = balanceOf({ l_amount: '10000.00', writeoff: '18000.00' });
   const plan = computePlan({ balance, target: toMinor('5000.00') });
   const warn = plan.findings.find((f) => f.code === 'prior_writeoff');
@@ -206,7 +205,7 @@ test('уже проведённые отписы попадают в преду�
   assert.equal(plan.ok, true);
 });
 
-test('payload содержит только непустые корзины и Decimal-строки', () => {
+test('payload contains only nonzero buckets and Decimal strings', () => {
   const balance = balanceOf({ l_tax8: '2000.00', l_amount: '20000.00' });
   const plan = computePlan({ balance, target: toMinor('20000.00') });
   const payload = buildPayload({
@@ -226,10 +225,10 @@ test('payload содержит только непустые корзины и D
   assert.equal(payload.amount, undefined);
 });
 
-test('ключ идемпотентности зависит от денег, но не от познамки', () => {
+test('idempotency key depends on amounts, not the note', () => {
   const balance = balanceOf({ l_tax8: '2000.00', l_amount: '20000.00' });
-  const a = computePlan({ balance, target: toMinor('20000.00'), notes: 'первая попытка' });
-  const b = computePlan({ balance, target: toMinor('20000.00'), notes: 'вторая попытка' });
+  const a = computePlan({ balance, target: toMinor('20000.00'), notes: 'first attempt' });
+  const b = computePlan({ balance, target: toMinor('20000.00'), notes: 'second attempt' });
   const c = computePlan({ balance, target: toMinor('19000.00') });
 
   assert.equal(a.idempotencyKey, b.idempotencyKey);
@@ -237,7 +236,7 @@ test('ключ идемпотентности зависит от денег, н
   assert.equal(a.idempotencyKey.length, 32);
 });
 
-test('ключ не зависит от порядка ключей в allocation', () => {
+test('key does not depend on allocation key order', () => {
   const one = idempotencyKey({
     customerId: '1', creditId: '2', debt: 100, target: 0,
     allocation: { tax8: 50, amount: 50 },
@@ -249,14 +248,14 @@ test('ключ не зависит от порядка ключей в allocatio
   assert.equal(one, two);
 });
 
-test('выбор кредита не доверяет фильтру', () => {
+test('credit selection does not trust the filter', () => {
   const rows = normalize(assocEnvelope([
     { id: '2999', l_amount: '0.00' },
     { id: '2001', l_amount: '21450.75' },
   ]).data);
 
   assert.equal(buildBalance(selectCreditRow(rows, '2001')).creditId, '2001');
-  assert.throws(() => selectCreditRow(rows, '999999'), /не найден/);
+  assert.throws(() => selectCreditRow(rows, '999999'), /was not found/);
   assert.deepEqual(
     listDebtors(rows).map((d) => d.creditId),
     ['2001'],

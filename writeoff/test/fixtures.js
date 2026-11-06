@@ -1,15 +1,15 @@
 'use strict';
 
 // ----------------------------------------------------------------------------
-// Фикстуры собираются программно из одного источника — объекта столбцов.
-// Это сознательно: позиционный вариант экспорта получается зипом того же
-// объекта, поэтому в тестах не может появиться сдвиг, которого нет в коде.
-// Ровно та ошибка, из-за которой позиционный формат и признан опасным.
+// Fixtures are generated from one source: the columns object.
+// The positional export is zipped from that same object, so tests cannot
+// introduce an offset that does not exist in the code. This is the error that
+// makes positional format risky.
 // ----------------------------------------------------------------------------
 
 const { ORDER, SOURCE_COLUMN } = require('../src/buckets');
 
-// Порядок здесь повторяет структуру экспорта в той части, что нас касается.
+// The order here mirrors the relevant part of the export structure.
 const COLUMN_ORDER = [
   'id', 'customer_id', 'charge', 'amount', 'debt', 'r_debt',
   'writeoff', 'writeoff_a', 'writeoff_l', 'writeoff_p',
@@ -57,15 +57,15 @@ for (const column of ['l_amount', 'l_cinterest', 'l_late_fee', 'r_charge']) {
   DEFAULTS[column] = '0.00';
 }
 
-// Плоская строка со всеми столбцами. debt по умолчанию считается как сумма
-// корзин водопада, чтобы фикстура была самосогласованной и guard debt_mismatch
-// не срабатывал там, где мы его не проверяем.
+// Flat row with all columns. By default, debt is the sum of waterfall buckets
+// so the fixture is self-consistent and debt_mismatch does not fire in tests
+// that do not cover it.
 function makeColumns(overrides = {}) {
   const columns = { ...DEFAULTS, ...overrides };
 
   if (overrides.debt === undefined) {
-    // Список берём из самого модуля, а не копией: иначе фикстуры разойдутся
-    // с картой столбцов — а это ровно та ошибка, которую тесты и ловят.
+    // Use the list from the module instead of a copy; otherwise fixtures could
+    // diverge from the column map, the very error these tests catch.
     const waterfall = ORDER.map((bucket) => SOURCE_COLUMN[bucket]);
     const sum = waterfall.reduce(
       (acc, column) => acc + Math.round(Number(columns[column] || 0) * 100),
@@ -78,7 +78,7 @@ function makeColumns(overrides = {}) {
   return columns;
 }
 
-// Формат assoc: ключи приходят с индексом столбца в суффиксе.
+// Assoc format: keys have the column index as a suffix.
 function assocRow(overrides = {}) {
   const columns = makeColumns(overrides);
   const row = {};
@@ -88,7 +88,7 @@ function assocRow(overrides = {}) {
   return row;
 }
 
-// Ответ API целиком: конверт + names + строки.
+// Complete API response: envelope + names + rows.
 function assocEnvelope(rowsOverrides = [{}]) {
   const names = {};
   COLUMN_ORDER.forEach((column, index) => { names[`${column}_${index}`] = column; });
@@ -98,7 +98,7 @@ function assocEnvelope(rowsOverrides = [{}]) {
   };
 }
 
-// Тот же набор, но позиционными массивами — как отдаёт export без format.
+// Same data as positional arrays, as export returns it without format.
 function positionalEnvelope(rowsOverrides = [{}]) {
   const names = {};
   COLUMN_ORDER.forEach((column, index) => { names[`${column}_${index}`] = column; });
@@ -114,15 +114,14 @@ function positionalEnvelope(rowsOverrides = [{}]) {
   };
 }
 
-// Подменяет fetch: отдаёт заранее заданные конверты по порядку вызовов
-// и записывает, что именно у него просили.
+// Replace fetch: return predefined envelopes in call order and record requests.
 function fakeFetch(envelopes) {
   const queue = [...envelopes];
   const calls = [];
   const impl = async (url, init) => {
     calls.push({ url: String(url), init });
     const next = queue.shift();
-    if (next === undefined) throw new Error(`неожиданный запрос: ${url}`);
+    if (next === undefined) throw new Error(`unexpected request: ${url}`);
     const body = typeof next === 'function' ? next({ url: String(url), init }) : next;
     return {
       status: 200,

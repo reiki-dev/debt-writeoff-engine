@@ -1,14 +1,13 @@
 'use strict';
 
 // ----------------------------------------------------------------------------
-// План отписа = ответ на вопрос «что именно мы спишем и почему».
+// A write-off plan answers “what exactly will be written off, and why?”
 //
-// Строится в два шага, и это разделение принципиально:
-//   computePlan()  — чистая функция от Balance. Ни сети, ни времени, ни файлов.
-//   buildPlan()    — читает экспорт и вызывает computePlan().
+// It is built in two distinct steps:
+//   computePlan()  — pure function of Balance; no network, time, or files.
+//   buildPlan()    — reads the export and calls computePlan().
 //
-// Отправки здесь нет ни в каком виде: план можно смотреть, логировать
-// и хранить, не рискуя ничем.
+// Nothing is sent here: the plan can be inspected, logged, and stored safely.
 // ----------------------------------------------------------------------------
 
 const crypto = require('node:crypto');
@@ -21,9 +20,9 @@ const { fromMinor, toMinor } = require('./money');
 const exportReader = require('./exportReader');
 const { buildBalance, selectCreditRow } = require('./balance');
 
-// Ключ идемпотентности: одна и та же проводка по одному кредиту не должна
-// уйти дважды. В хэш входит всё, что определяет проводку по деньгам —
-// но НЕ notes и НЕ дата, иначе повтор с другой познамкой пройдёт как новый.
+// Idempotency key: the same write-off for one credit must not be sent twice.
+// The hash includes everything that determines its monetary effect, but not
+// notes or date, so changing the note does not create a new write-off.
 function idempotencyKey({ customerId, creditId, debt, target, allocation }) {
   const canonical = JSON.stringify({
     customerId: String(customerId),
@@ -37,20 +36,20 @@ function idempotencyKey({ customerId, creditId, debt, target, allocation }) {
   return crypto.createHash('sha256').update(canonical).digest('hex').slice(0, 32);
 }
 
-// Тело запроса к special/writeoff. Отдельная функция, чтобы её можно было
-// проверить тестом, не отправляя ничего.
+// Request body for special/writeoff. Kept separate so it can be tested without
+// sending anything.
 function buildPayload({ customerId, creditId, allocation, notes, date }) {
   const payload = {
     customerId: Number(customerId),
     creditId: Number(creditId),
   };
 
-  // Тело собирается обходом ORDER, поэтому корзина, которой в ORDER нет,
-  // молча не попала бы в запрос — и проводка ушла бы на меньшую сумму,
-  // чем показано в плане. Проверяем явно.
+  // The body is built by iterating ORDER. A bucket missing from ORDER would be
+  // silently omitted, sending a smaller amount than the plan shows. Check this
+  // explicitly.
   const unknown = Object.keys(allocation).filter((bucket) => !ORDER.includes(bucket));
   if (unknown.length) {
-    throw new Error(`в раскладке есть корзины вне иерархии: ${unknown.join(', ')}`);
+    throw new Error(`allocation contains buckets outside the hierarchy: ${unknown.join(', ')}`);
   }
 
   for (const bucket of ORDER) {
@@ -58,9 +57,9 @@ function buildPayload({ customerId, creditId, allocation, notes, date }) {
     if (minor === 0) continue;
     const field = PAYLOAD_FIELD[bucket];
     if (field === undefined) {
-      // до этого не дойдёт: guard api_unsupported_bucket ловит раньше.
-      // Но пусть падает громко, а не отправляет проводку без части суммы.
-      throw new Error(`корзина ${bucket} не имеет поля в контракте writeoff`);
+      // This should be caught earlier by api_unsupported_bucket, but fail loudly
+      // instead of sending a write-off missing part of the amount.
+      throw new Error(`bucket ${bucket} has no field in the writeoff contract`);
     }
     payload[field] = fromMinor(minor);
   }
@@ -70,7 +69,7 @@ function buildPayload({ customerId, creditId, allocation, notes, date }) {
   return payload;
 }
 
-// target — целое в haléřích (сколько долга должно ОСТАТЬСЯ).
+// target is an integer in haléře (how much debt should REMAIN).
 function computePlan({ balance, target, notes = '', tolerance = config.DEBT_TOLERANCE_MINOR }) {
   const amount = Math.max(balance.debt - target, 0);
   const { allocation, allocated, shortfall, steps, capacity } = allocate({
@@ -109,19 +108,18 @@ function computePlan({ balance, target, notes = '', tolerance = config.DEBT_TOLE
   };
 }
 
-// target задаётся в korunách — строкой ("25000", "25000.00") или числом (25000).
-// Если нужно передать уже пересчитанное значение, используйте targetMinor:
-// смешивать koruny и haléře в одном параметре — верный способ отписать
-// в сто раз больше, чем собирались.
+// target is specified in crowns as a string ("25000", "25000.00") or number (25000).
+// To pass an already converted value, use targetMinor. Mixing crowns and haléře
+// in one parameter is an easy way to write off one hundred times the intended amount.
 async function buildPlan({
   customerId, creditId, target, targetMinor, notes = '', cfg = config, ...rest
 } = {}) {
   if ((target === undefined) === (targetMinor === undefined)) {
-    throw new Error('укажите ровно одно: target (в Kč) либо targetMinor (в haléřích)');
+    throw new Error('specify exactly one: target (in Kč) or targetMinor (in haléře)');
   }
   const resolvedTarget = targetMinor === undefined ? toMinor(target, 'target') : targetMinor;
   if (!Number.isInteger(resolvedTarget)) {
-    throw new Error(`targetMinor должен быть целым, получено ${targetMinor}`);
+    throw new Error(`targetMinor must be an integer, received ${targetMinor}`);
   }
 
   const { rows } = await exportReader.fetchCreditRows({ customerId, creditId, cfg, ...rest });

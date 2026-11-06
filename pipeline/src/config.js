@@ -1,12 +1,12 @@
 'use strict';
 
 // ----------------------------------------------------------------------------
-// Konfigurace modulu "Splátkový kalendář" (pipeline).
+// Configuration for the "Splátkový kalendář" (payment schedule) pipeline module.
 //
-// CRM API klíč a doménu NEDUPLIKUJEME — bereme je z už nakonfigurovaného
-// modulu odpisu (writeoff/src/config.js), stejně jako to dělá
-// writeoff-bridge.js pro server.js. Nový klíč jen tehdy, když pipeline
-// potřebuje něco, co odpis nepotřebuje (Playwright login, Google Sheets).
+// Do not duplicate the CRM API key or host; use the existing write-off module
+// configuration (writeoff/src/config.js), as writeoff-bridge.js does for
+// server.js. Add a key only if the pipeline needs something the write-off
+// module does not (Playwright login or Google Sheets).
 // ----------------------------------------------------------------------------
 
 const { config: writeoffConfig } = require('../../writeoff/src/config');
@@ -20,26 +20,26 @@ function envInt(name, fallback) {
 }
 
 const config = {
-  // Sdilene s modulem odpisu.
+  // Shared with the write-off module.
   BASE_URL: writeoffConfig.BASE_URL,
   API_KEY: writeoffConfig.API_KEY,
   AUTH_MODE: writeoffConfig.AUTH_MODE,
   HTTP_TIMEOUT_MS: writeoffConfig.HTTP_TIMEOUT_MS,
 
-  // Login do webove administrace CRM — API klic tam neplati,
-  // formular kalendare zije za beznou session prohlizece. Krok 7 (Playwright).
+  // Login for the CRM web admin; the API key is not used here. The calendar
+  // form requires a regular browser session. Step 7 (Playwright).
   ADMIN_USER: process.env.CRM_ADMIN_USER || '',
   ADMIN_PASS: process.env.CRM_ADMIN_PASS || '',
   ADMIN_PATH: process.env.CRM_ADMIN_PATH || '/admin',
   SCHEDULE_FORM_PATH: process.env.CRM_SCHEDULE_FORM_PATH || '/admin/refund-schedule/create',
 
-  // Kategorie (kroky 3-4). Vychozi hodnoty odpovidaji tomu, co uz je
+  // Categories (steps 3-4). Defaults match the configured pipeline values.
   // example defaults for categories used by the pipeline.
   CATEGORY_CUSTOMER: envInt('CRM_PIPELINE_CUSTOMER_CATEGORY', 1),
   CATEGORY_CREDIT: envInt('CRM_PIPELINE_CREDIT_CATEGORY', 2),
 
-  // Duvody blacklistu — vybira operator na zacatku (spolu s ID klienta),
-  // ne uprostred pipeline.
+  // Blacklist reasons are selected by the operator at the start, alongside
+  // the customer ID, rather than midway through the pipeline.
   BLACKLIST_REASONS: {
     1: 'EPR',
     2: 'Client',
@@ -47,16 +47,16 @@ const config = {
     4: 'Attorney',
     5: 'Attorney and Financial Arbitrator',
   },
-  // Fixni text poznamky pro blacklist (krok 9) — podle zadani vzdy stejny.
+  // Fixed blacklist note (step 9), as required.
   BLACKLIST_NOTE: 'Splátkový kalendář',
 
-  // Google Sheets (krok 2).
+  // Google Sheets (step 2).
   SHEET_ID: process.env.CRM_SHEET_ID || '',
   SHEET_GID: process.env.CRM_SHEET_GID || '',
   SHEETS_NOTES_TAB: process.env.SHEETS_NOTES_TAB || 'Notes',
   GOOGLE_CREDENTIALS_PATH: process.env.GOOGLE_APPLICATION_CREDENTIALS || '',
-  // Sloupec A = ID klienta. Poznamka jde do prvni prazdne bunky od tohoto
-  // sloupce doprava. Index 0-based, 23 = sloupec "X" (presne jak v zadani).
+  // Column A contains the customer ID. Write the note to the first empty cell
+  // from this column onward. Zero-based index; 23 is column "X".
   SHEET_NOTE_START_COL: envInt('CRM_SHEET_NOTE_START_COL', 23),
 
   ACTOR: process.env.CRM_ACTOR || '',
@@ -65,8 +65,8 @@ const config = {
   CALENDAR_TIMEOUT_MS: envInt('CRM_CALENDAR_TIMEOUT_MS', 60000),
 };
 
-// Volitelna kontrola pred spustenim pipeline — ukazuje operatorovi/adminovi
-// srozumitelnou chybu misto tajemneho selhani uprostred kroku 2 nebo 7.
+// Optional validation before starting the pipeline; show the operator/admin a
+// clear error instead of an opaque failure midway through step 2 or 7.
 function assertPipelineUsable(cfg = config) {
   const missing = [];
   if (!cfg.API_KEY) missing.push('CRM_API_KEY');

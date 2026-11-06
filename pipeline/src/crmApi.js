@@ -1,26 +1,23 @@
 'use strict';
 
 // ----------------------------------------------------------------------------
-// Tenke obalky nad CRM API, ktere modul odpisu nema: zmena kategorii,
-// poznamky, blacklist. Navazuje na stejny API kontrakt
-// (HTTP 200 != uspech, skutecny vysledek je v envelope.status, klic v hlavicce
-// x-api-key). BASE_URL/API_KEY bereme z pipeline/src/config.js, ktery je
-// zase bere z jiz nakonfigurovaneho modulu odpisu — jedno misto pravdy.
+// Thin wrappers for CRM API operations not covered by the write-off module:
+// category changes, notes, and blacklist. They use the same API contract
+// (HTTP 200 != success; the actual result is in envelope.status; key in the
+// x-api-key header). BASE_URL/API_KEY come from pipeline/src/config.js, which
+// reads the existing write-off module configuration as the single source of truth.
 //
-// POZOR na dve neoverene veci (oznaceno i u prislusnych funkci nize):
-//  - putCreditCategory: endpoint /api/v1.0/credits/category nebyl v puvodnim
-//    kodu pouzit, nazvy parametru (creditId/categoryId) jsou odhad podle
-//    sesterskeho customers/category. Overit prvnim skutecnym volanim.
-//  - postBlacklist: OPRAVENO 2026-09-04 podle crm_api.pdf (customer
-//    function postBlacklist()) po realnem selhani "InvalidArgument: No
-//    unique fields provided". CRM tento endpoint VUBEC nezna pole
-//    "customerId" ani "notes" — bere jen: personCode, idNumber,
-//    accountNumber, ip, description, fullName, phone, phone2, email,
-//    email2, source, adminId, reasonId, date, a vyzaduje aspon JEDNO z
-//    "unikatnich" poli (personCode/idNumber/accountNumber/phone/phone2/
-//    email/email2/ip) — bez nich vraci prave tuto chybu. Puvodni kod
-//    posilal jen customerId+reasonId+notes, coz CRM tise ignorovalo jako
-//    neznama pole, a bez jedineho unikatniho pole vzdy selhalo.
+// Verify these API details against the current CRM contract and installation:
+//  - putCreditCategory: confirm the /api/v1.0/credits/category endpoint and
+//    creditId/categoryId parameter names; they are inferred from the related
+//    customers/category endpoint.
+//  - postBlacklist: the endpoint may reject requests without at least one
+//    unique customer identifier. It accepts personCode, idNumber,
+//    accountNumber, ip, description, fullName, phone, phone2, email, email2,
+//    source, adminId, reasonId, and date; at least one of personCode/idNumber/
+//    accountNumber/phone/phone2/email/email2/ip is required. customerId and
+//    notes are not accepted fields. Use the current crm_api.pdf contract to
+//    confirm supported fields and required parameters.
 // ----------------------------------------------------------------------------
 
 const { config } = require('./config');
@@ -85,7 +82,7 @@ async function call(path, { method = 'GET', query = {}, body = null } = {}) {
   return json;
 }
 
-// Krok 3: kategorie klienta (vychozi 21 — splátkový kalendář).
+// Step 3: customer category (default 21 — payment schedule).
 async function putCategory({ customerId, categoryId }) {
   return call('/api/v1.0/customers/category', {
     method: 'PUT',
@@ -93,7 +90,7 @@ async function putCategory({ customerId, categoryId }) {
   });
 }
 
-// Krok 4: kategorie pujcky (vychozi 155). NEOVERENO — viz poznamka nahore.
+// Step 4: loan category (default 155). UNVERIFIED; see note above.
 async function putCreditCategory({ creditId, categoryId }) {
   return call('/api/v1.0/credits/category', {
     method: 'PUT',
@@ -101,7 +98,7 @@ async function putCreditCategory({ creditId, categoryId }) {
   });
 }
 
-// Krok 10a: poznamka do profilu klienta.
+// Step 10a: note on the customer profile.
 async function postCustomerNotes({ customerId, notes }) {
   return call('/api/v1.0/special/customer-notes', {
     method: 'POST',
@@ -109,19 +106,18 @@ async function postCustomerNotes({ customerId, notes }) {
   });
 }
 
-// Krok 10b: poznamka do pujcky.
+// Step 10b: note on the loan.
 async function postLoanNotes({ loanId, notes, userName }) {
   const query = { loanId: Number(loanId), notes };
   if (userName) query.userName = userName;
   return call('/api/v1.0/special/loan-notes', { method: 'POST', query });
 }
 
-// Krok 9: blacklist. Podle crm_api.pdf CRM vyzaduje aspon jedno
-// "unikatni" identifikacni pole klienta (personCode/idNumber/
-// accountNumber/phone/phone2/email/email2/ip) — customerId tento endpoint
-// vubec nezna. Ktera pole u konkretniho klienta mame, zjisti volajici
-// (orchestrator) z exportu (krok 1, read_balance) pomoci
-// resolveBlacklistUniqueFields nize a preda je sem uz vyresene.
+// Step 9: blacklist. According to crm_api.pdf, CRM requires at least one
+// unique customer identifier (personCode/idNumber/accountNumber/phone/phone2/
+// email/email2/ip); this endpoint does not accept customerId. The caller
+// (orchestrator) resolves available fields from the export in step 1
+// (read_balance) using resolveBlacklistUniqueFields below and passes them here.
 async function postBlacklist({
   reasonId, description,
   personCode, idNumber, accountNumber, ip, phone, phone2, email, email2,
@@ -151,15 +147,12 @@ async function postBlacklist({
   return call('/api/v1.0/customers/blacklist', { method: 'POST', query });
 }
 
-// Z "raw" radky exportu (viz writeoff/src/exportReader.js:pick) se
-// pokusi vytahnout unikatni identifikacni pole klienta pro postBlacklist.
-// Nazvy sloupcu v tomto konkretnim exportu nejsou jiste (nebyly overeny
-// proti zivym datum), proto zkousime nekolik pravdepodobnych variant pro
-// kazde pole pres stejne "pick" pravidlo, jake pouziva zbytek modulu odpisu
-// (presna shoda, nebo shoda_s_indexem typu "phone_12"). Kdyz se nenajde
-// vubec nic, vyhodime chybu VCETNE seznamu vsech sloupcu, ktere export
-// skutecne vratil — aby bylo hned videt, jak se dany sloupec doopravdy
-// jmenuje, a priste uz jen doplnime spravny nazev do CANDIDATES.
+// Try to extract unique customer identifiers for postBlacklist from the raw
+// export row (see writeoff/src/exportReader.js:pick). Exact column names in this
+// export are not confirmed, so try likely alternatives for each field using the
+// write-off module's pick rules (exact match or indexed name such as "phone_12").
+// If no identifier is found, include all returned column names in the error to
+// show the export schema and allow CANDIDATES to be updated.
 function resolveBlacklistUniqueFields(raw, { pick, hasColumn }) {
   const CANDIDATES = {
     phone: ['phone', 'customer_phone', 'customers.phone', 'tel', 'telephone'],

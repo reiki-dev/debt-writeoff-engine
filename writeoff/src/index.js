@@ -1,6 +1,6 @@
 'use strict';
 
-// Публичный интерфейс модуля. Ровно это и будет вызывать пайплайн и веб-роут.
+// Public module interface used by the pipeline and web route.
 
 const { config, assertUsable } = require('./config');
 const buckets = require('./buckets');
@@ -18,15 +18,15 @@ const audit = require('./audit');
 const { formatPlan, formatApply, formatProbe } = require('./report');
 
 module.exports = {
-  // конфиг
+  // configuration
   config,
   assertUsable,
 
-  // предметная модель
+  // domain model
   buckets,
   money,
 
-  // чтение
+  // reading
   fetchExport,
   fetchCreditRows,
   normalize,
@@ -36,7 +36,7 @@ module.exports = {
   selectCreditRow,
   listDebtors,
 
-  // расчёт
+  // calculation
   allocate,
   guards,
   buildPlan,
@@ -44,19 +44,19 @@ module.exports = {
   buildPayload,
   idempotencyKey,
 
-  // проводка
+  // write-off
   applyPlan,
   postWriteoff,
   verify,
   WRITEOFF_PATH,
 
-  // аудит и вывод
+  // audit and output
   audit,
   formatPlan,
   formatApply,
   formatProbe,
 
-  // ошибки
+  // errors
   ApiError,
   ExportError,
   WriteoffError,

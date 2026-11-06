@@ -1,8 +1,8 @@
 'use strict';
 
 // ----------------------------------------------------------------------------
-// Строка экспорта -> объект Balance: остатки по корзинам в haléřích плюс всё,
-// что нужно гардам. Чистая функция, сети здесь нет.
+// Export row -> Balance object: bucket balances in haléře plus the data needed
+// by guards. This is a pure function with no network access.
 // ----------------------------------------------------------------------------
 
 const { pick, hasColumn, ExportError } = require('./exportReader');
@@ -13,11 +13,11 @@ const {
 } = require('./buckets');
 
 function buildBalance(row) {
-  if (!row || typeof row !== 'object') throw new ExportError('buildBalance: строка не объект');
+  if (!row || typeof row !== 'object') throw new ExportError('buildBalance: row is not an object');
 
   if (!hasColumn(row, DEBT_COLUMN)) {
     throw new ExportError(
-      `в экспорте нет столбца «${DEBT_COLUMN}» — без системного итога долга сверить отпис нечем`,
+      `export is missing column "${DEBT_COLUMN}" — cannot reconcile the write-off without system debt`,
     );
   }
 
@@ -27,8 +27,8 @@ function buildBalance(row) {
   for (const bucket of ORDER) {
     const column = SOURCE_COLUMN[bucket];
     if (!hasColumn(row, column)) {
-      // столбца нет вообще -> корзина недоступна. Считаем её нулём, но
-      // помним об этом: если из-за неё не сойдётся debt, guard объяснит причину.
+      // Missing column means the bucket is unavailable. Treat it as zero, but
+      // keep track of it so a debt mismatch can explain the reason.
       missingColumns.push({ bucket, column });
       buckets[bucket] = 0;
       continue;
@@ -36,7 +36,7 @@ function buildBalance(row) {
     buckets[bucket] = toMinorOrZero(pick(row, column), column);
   }
 
-  // остатки вне водопада — только для объяснения расхождений
+  // Balances outside the waterfall are kept to explain discrepancies.
   const outOfWaterfall = {};
   for (const column of OUT_OF_WATERFALL_COLUMNS) {
     if (!hasColumn(row, column)) continue;
@@ -44,7 +44,7 @@ function buildBalance(row) {
     if (value !== 0) outOfWaterfall[column] = value;
   }
 
-  // справочные столбцы: и сырое значение, и разобранное (если разбирается)
+  // Reference columns: both the raw value and the parsed value, if possible.
   const diagnostics = {};
   for (const column of DIAGNOSTIC_COLUMNS) {
     if (!hasColumn(row, column)) continue;
@@ -53,7 +53,7 @@ function buildBalance(row) {
     try {
       minor = toMinorOrZero(raw, column);
     } catch {
-      minor = null;                     // не число — покажем как есть
+      minor = null;                     // Not numeric; display it as-is.
     }
     diagnostics[column] = { raw, minor };
   }
@@ -73,18 +73,18 @@ function buildBalance(row) {
     outOfWaterfall,
     diagnostics,
     meta,
-    // сырую строку не тащим целиком в аудит (там ПДн клиента),
-    // но оставляем доступной вызывающему коду для probe
+    // Do not put the raw row in the audit log (it contains customer PII),
+    // but keep it available to the caller for probe.
     raw: row,
   };
 }
 
-// Выбор нужного кредита из ответа экспорта.
-// Не доверяем фильтру: сверяем столбец id сами. Если фильтр по credits.id
-// вдруг не сработал, лучше упасть, чем отписать не тот кредит.
+// Select the requested credit from the export response.
+// Do not trust the filter: check the id column ourselves. If the credits.id
+// filter did not work, failing is safer than writing off the wrong credit.
 function selectCreditRow(rows, creditId) {
   if (!Array.isArray(rows) || rows.length === 0) {
-    throw new ExportError('экспорт не вернул ни одной строки — проверьте customerId/creditId');
+    throw new ExportError('export returned no rows — check customerId/creditId');
   }
 
   const wanted = String(creditId);
@@ -93,20 +93,20 @@ function selectCreditRow(rows, creditId) {
   if (matches.length === 0) {
     const seen = rows.map((row) => String(pick(row, 'id') ?? '?')).join(', ');
     throw new ExportError(
-      `кредит ${wanted} не найден у этого клиента. В экспорте есть: ${seen}`,
+      `credit ${wanted} was not found for this customer. Credits in export: ${seen}`,
       { wanted, available: rows.map((row) => String(pick(row, 'id') ?? '?')) },
     );
   }
   if (matches.length > 1) {
     throw new ExportError(
-      `экспорт вернул ${matches.length} строк для кредита ${wanted} — ожидалась одна`,
+      `export returned ${matches.length} rows for credit ${wanted} — expected one`,
       { wanted, count: matches.length },
     );
   }
   return matches[0];
 }
 
-// Список кредитов клиента с ненулевым долгом — чтобы оператор выбрал creditId.
+// List the customer's credits with nonzero debt so the operator can choose creditId.
 function listDebtors(rows) {
   return rows
     .map((row) => ({

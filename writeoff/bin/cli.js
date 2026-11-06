@@ -2,14 +2,14 @@
 'use strict';
 
 // ----------------------------------------------------------------------------
-// CLI модуля отписа. Интерфейса нет — это и есть интерфейс.
+// CLI for the write-off module. This is its user interface.
 //
 //   probe    --customer 1001 [--credit 2001]
 //   preview  --customer 1001 --credit 2001 --target 25000
 //   apply    --customer 1001 --credit 2001 --target 25000 [--live]
 //   history  --key <idempotencyKey>
 //
-// apply без --live ничего не отправляет и печатает готовое тело запроса.
+// apply without --live sends nothing and prints the prepared request body.
 // ----------------------------------------------------------------------------
 
 const {
@@ -22,7 +22,7 @@ function parseArgs(argv) {
   const flags = {};
   for (let i = 0; i < rest.length; i += 1) {
     const token = rest[i];
-    if (!token.startsWith('--')) throw new Error(`неожиданный аргумент: ${token}`);
+    if (!token.startsWith('--')) throw new Error(`unexpected argument: ${token}`);
     const name = token.slice(2);
     const next = rest[i + 1];
     if (next === undefined || next.startsWith('--')) {
@@ -38,32 +38,32 @@ function parseArgs(argv) {
 function required(flags, name) {
   const value = flags[name];
   if (value === undefined || value === true || value === '') {
-    throw new Error(`--${name} обязателен`);
+    throw new Error(`--${name} is required`);
   }
   return value;
 }
 
 const USAGE = `
-fintech-writeoff — отпис долга по иерархии корзин
+fintech-writeoff — write off debt using the bucket hierarchy
 
-  probe    --customer <id> [--credit <id>]              показать остатки и сверку с debt
-  preview  --customer <id> --credit <id> --target <Kč>  раскладка отписа, ничего не отправляет
-  apply    --customer <id> --credit <id> --target <Kč>  провести отпис
-             [--live]        реально отправить (без флага — dry-run)
-             [--force]       снять снимаемые гарды / повторить проводку
-             [--notes "..."] познамка в отпис
-             [--no-verify]   не перечитывать баланс после проводки
-  history  --key <ключ>                                 записи аудита по ключу
+  probe    --customer <id> [--credit <id>]              show balances and reconciliation with debt
+  preview  --customer <id> --credit <id> --target <Kč>  preview allocation; sends nothing
+  apply    --customer <id> --credit <id> --target <Kč>  apply a write-off
+             [--live]        send the request (without this flag: dry-run)
+             [--force]       bypass eligible guards / retry a write-off
+             [--notes "..."] write-off note
+             [--no-verify]   do not reread the balance after the write-off
+  history  --key <key>                                  audit records for the key
 
-Окружение:
-  CRM_API_KEY            ключ (обязателен)
+Environment:
+  CRM_API_KEY            API key (required)
   CRM_BASE_URL           ${config.BASE_URL}
   CRM_EXPORT_ID          ${config.EXPORT_ID}
   CRM_AUTH_MODE          ${config.AUTH_MODE}   (header|query)
   CRM_WRITEOFF_TRANSPORT ${config.WRITEOFF_TRANSPORT}     (body|query)
-  CRM_ACTOR              имя оператора для познамок и аудита
+  CRM_ACTOR              operator name for notes and audit log
   CRM_AUDIT_DIR          ${config.AUDIT_DIR}
-  CRM_DEBT_TOLERANCE     ${config.DEBT_TOLERANCE_MINOR}        допуск сверки, haléře
+  CRM_DEBT_TOLERANCE     ${config.DEBT_TOLERANCE_MINOR}        reconciliation tolerance, haléře
 `.trim();
 
 async function cmdProbe(flags) {
@@ -74,11 +74,11 @@ async function cmdProbe(flags) {
 
   if (!creditId) {
     const debtors = listDebtors(rows);
-    console.log(`Клиент ${customerId}: строк в экспорте ${rows.length}, с долгом ${debtors.length}`);
+    console.log(`Customer ${customerId}: ${rows.length} rows in export, ${debtors.length} with debt`);
     for (const entry of debtors) {
-      console.log(`  кредит ${entry.creditId}  долг ${money.fromMinor(entry.debt)}`);
+      console.log(`  credit ${entry.creditId}  debt ${money.fromMinor(entry.debt)}`);
     }
-    if (debtors.length) console.log('\nЗапустите probe с --credit <id> для разбора по корзинам.');
+    if (debtors.length) console.log('\nRun probe with --credit <id> to inspect the bucket balances.');
     return;
   }
 
@@ -102,7 +102,7 @@ async function cmdApply(flags) {
 
   const live = flags.live === true;
   if (!live) {
-    console.log('Режим dry-run (нет --live). Запрос отправлен НЕ будет.\n');
+    console.log('Dry-run mode (--live not set). The request will NOT be sent.\n');
   }
 
   const result = await applyPlan(plan, {
@@ -119,7 +119,7 @@ async function cmdApply(flags) {
 async function cmdHistory(flags) {
   const entries = await audit.history(required(flags, 'key'));
   if (!entries.length) {
-    console.log('Записей по этому ключу нет.');
+    console.log('No records found for this key.');
     return;
   }
   for (const entry of entries) {
@@ -144,12 +144,12 @@ async function main() {
     case 'apply': return cmdApply(flags);
     case 'history': return cmdHistory(flags);
     default:
-      throw new Error(`неизвестная команда «${command}». ${'\n'}${USAGE}`);
+      throw new Error(`unknown command "${command}". ${'\n'}${USAGE}`);
   }
 }
 
 main().catch((err) => {
-  console.error(`\nОшибка: ${err.message}`);
+  console.error(`\nError: ${err.message}`);
   if (process.env.CRM_DEBUG) console.error(err);
   process.exitCode = 1;
 });

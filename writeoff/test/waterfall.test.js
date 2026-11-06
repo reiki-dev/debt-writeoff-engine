@@ -14,7 +14,7 @@ function buckets(spec) {
   return out;
 }
 
-test('иерархия соблюдается: сверху tax12, снизу тело', () => {
+test('hierarchy is respected: tax12 first, principal last', () => {
   const result = allocate({
     buckets: buckets({ tax12: '100.00', tax1: '100.00', amount: '100.00' }),
     order: ORDER,
@@ -23,11 +23,11 @@ test('иерархия соблюдается: сверху tax12, снизу т
 
   assert.equal(fromMinor(result.allocation.tax12), '100.00');
   assert.equal(fromMinor(result.allocation.tax1), '50.00');
-  assert.equal(result.allocation.amount, undefined);   // тело не тронуто
+  assert.equal(result.allocation.amount, undefined);   // Principal is untouched.
   assert.equal(result.shortfall, 0);
 });
 
-test('последняя задетая корзина гасится частично', () => {
+test('the last affected bucket is reduced partially', () => {
   const result = allocate({
     buckets: buckets({ tax8: '2000.00', late_fee: '2208.00', amount: '10000.00' }),
     order: ORDER,
@@ -42,8 +42,8 @@ test('последняя задетая корзина гасится части
   assert.equal(lateFeeStep.partial, true);
 });
 
-test('порядок именно tax12..tax1, а не лексический', () => {
-  // при лексической сортировке tax10 шёл бы раньше tax9 — проверяем, что нет
+test('order is tax12..tax1, not lexicographic', () => {
+  // Lexicographic sorting would put tax10 before tax9; verify it does not.
   const result = allocate({
     buckets: buckets({ tax9: '10.00', tax10: '10.00' }),
     order: ORDER,
@@ -53,7 +53,7 @@ test('порядок именно tax12..tax1, а не лексический', 
   assert.equal(result.allocation.tax9, undefined);
 });
 
-test('порядок именно tax12..tax6, затем tax2..tax5, tax1', () => {
+test('order is tax12..tax6, then tax2..tax5, then tax1', () => {
   const result = allocate({
     buckets: buckets({
       tax6: '10.00', tax2: '10.00', tax3: '10.00', tax4: '10.00', tax5: '10.00', tax1: '10.00',
@@ -74,7 +74,7 @@ test('порядок именно tax12..tax6, затем tax2..tax5, tax1', () 
   assert.equal(result.allocation.amount, undefined);
 });
 
-test('charge гасится раньше cinterest и late_fee', () => {
+test('charge is cleared before cinterest and late_fee', () => {
   const result = allocate({
     buckets: buckets({
       charge: '100.00', cinterest: '100.00', late_fee: '100.00',
@@ -87,24 +87,24 @@ test('charge гасится раньше cinterest и late_fee', () => {
   assert.equal(result.allocation.late_fee, undefined);
 });
 
-test('никогда не берёт больше остатка корзины', () => {
+test('never takes more than a bucket balance', () => {
   const spec = buckets({ tax5: '50.00', amount: '30.00' });
   const result = allocate({ buckets: spec, order: ORDER, amount: toMinor('1000.00') });
 
   for (const [bucket, taken] of Object.entries(result.allocation)) {
-    assert.ok(taken <= spec[bucket], `${bucket}: взято больше остатка`);
+    assert.ok(taken <= spec[bucket], `${bucket}: amount exceeds balance`);
   }
   assert.equal(fromMinor(result.allocated), '80.00');
   assert.equal(fromMinor(result.shortfall), '920.00');
 });
 
-test('нулевая сумма ничего не распределяет', () => {
+test('zero amount allocates nothing', () => {
   const result = allocate({ buckets: buckets({ amount: '100.00' }), order: ORDER, amount: 0 });
   assert.deepEqual(result.allocation, {});
   assert.equal(result.allocated, 0);
 });
 
-test('отказывается работать с float и отрицательными', () => {
+test('rejects floats and negative values', () => {
   assert.throws(() => allocate({ buckets: buckets({}), order: ORDER, amount: 10.5 }), TypeError);
   assert.throws(() => allocate({ buckets: buckets({}), order: ORDER, amount: -100 }), RangeError);
   assert.throws(

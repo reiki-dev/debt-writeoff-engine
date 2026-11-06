@@ -1,19 +1,16 @@
 'use strict';
 
 // ----------------------------------------------------------------------------
-// Orchestrator pipeline "Splátkový kalendář" — kroky 1-10.
+// Orchestrator for the "Splátkový kalendář" (payment schedule) pipeline, steps 1-10.
 //
-// Stav operace drzime v pameti procesu (rozhodnuto vedome: modul pouziva
-// jeden clovek najednou, pretrvani restartu kontejneru neni potreba — na
-// rozdil od audit-logu odpisu, ktery MUSI prezit, protoze resi idempotenci
-// penez). Kazda operace je objekt v Map, pipeline bezi krok za krokem a
-// zastavuje se na rucnich checkpointech (pause_reminders, calendar_confirm),
-// dokud operator nezavola confirmStep().
+// Operation state is kept in process memory. The module is used by one operator
+// at a time and does not need to survive container restarts, unlike the write-off
+// audit log, which must persist to enforce monetary idempotency. Each operation
+// is stored in a Map; the pipeline runs step by step and pauses at manual
+// checkpoints (pause_reminders, calendar_confirm) until confirmStep() is called.
 //
-// Vyber kategorie blacklistu a typu dohody (DON/EPR) se deje NA ZACATKU,
-// spolu s ID klienta/pujcky — na rozdil od starsi predchozi klient, kde se
-// kategorie blacklistu vybirala uprostred pipeline. Prepinace jednotlivych
-// kroku zustavaji zachovany.
+// Select the blacklist category and agreement type (DON/EPR) at the START,
+// together with the customer/loan IDs. Keep the individual step toggles.
 // ----------------------------------------------------------------------------
 
 const crypto = require('node:crypto');
@@ -28,13 +25,12 @@ const { config } = require('./config');
 
 const operations = new Map();
 
-// --- definice kroku ----------------------------------------------------------
+// --- step definitions --------------------------------------------------------
 //
-// toggleKey: null      -> krok je povinny, nelze vypnout (jen read_balance).
-// toggleKey: 'x'        -> krok patri pod prepinac 'x' (calendar_launch i
-//                          calendar_confirm sdileji jeden prepinac 'calendar',
-//                          jako v puvodnim klientskem toku).
-// manual: true          -> krok ceka na potvrzeni operatora (confirmStep).
+// toggleKey: null       -> required step that cannot be disabled (read_balance only).
+// toggleKey: 'x'        -> step controlled by toggle 'x' (calendar_launch and
+//                          calendar_confirm share the 'calendar' toggle).
+// manual: true          -> step waits for operator confirmation (confirmStep).
 
 const STEP_DEFS = [
   {
@@ -117,11 +113,10 @@ const STEP_DEFS = [
   {
     name: 'blacklist', label: 'Blacklist', toggleKey: 'blacklist',
     async run(op) {
-      // CRM (customers/blacklist) nezna "customerId" jako identifikator —
-      // vyzaduje aspon jedno "unikatni" pole klienta (telefon/e-mail/rodne
-      // cislo/cislo uctu apod, viz crm_api.pdf). Bereme je ze
-      // "syrove" radky exportu, ktera se ulozila uz v kroku read_balance
-      // (op.balance.raw) — zadny dalsi HTTP volani netreba.
+      // CRM (customers/blacklist) does not accept "customerId" as an identifier;
+      // it requires at least one unique customer field (phone, email, national
+      // ID, account number, etc.; see crm_api.pdf). Read these from the raw export
+      // row saved in read_balance (op.balance.raw), without another HTTP request.
       const uniqueFields = crmApi.resolveBlacklistUniqueFields(op.balance && op.balance.raw, { pick, hasColumn });
       return crmApi.postBlacklist({
         ...uniqueFields,
@@ -140,7 +135,7 @@ const STEP_DEFS = [
   },
 ];
 
-// --- pomocne funkce ------------------------------------------------------------
+// --- helper functions --------------------------------------------------------
 
 function newOperationId() { return crypto.randomUUID(); }
 
@@ -167,7 +162,7 @@ function markSkippedSteps(op) {
   }
 }
 
-// --- sestaveni a spusteni operace ----------------------------------------------
+// --- build and run operation -------------------------------------------------
 
 function buildOperation({
   customerId, creditId, type, blacklistReasonId, targetTotal,
@@ -231,9 +226,9 @@ async function advance(op) {
       op.status = 'failed';
       op.failedAt = def.name;
       op.error = err.message;
-      // Krok kalendare pri chybe muze prinest screenshot stranky, na ktere
-      // se Playwright ve skutecnosti ocitl — ulozime ho, aby ho operator
-      // videl stejnym /calendar-preview.png, jakym by videl uspesny nahled.
+      // If the calendar step fails, it may include a screenshot of the page
+      // Playwright reached. Save it so the operator can view it using the same
+      // /calendar-preview.png endpoint as a successful preview.
       if (err.debugScreenshot) op.calendarScreenshot = err.debugScreenshot;
       return;
     }

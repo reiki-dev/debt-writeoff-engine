@@ -1,16 +1,16 @@
 'use strict';
 
 // ----------------------------------------------------------------------------
-// Единственное место в модуле, которое отправляет POST и двигает деньги.
+// The only place in the module that sends a POST request and moves money.
 //
-// Правила, зашитые намеренно жёстко:
-//   * dry-run по умолчанию. Реальная отправка только при live: true.
-//   * план с блокирующим гардом не отправляется; часть гардов не снимается
-//     даже force (см. guards.HARD_CODES).
-//   * повторная проводка с тем же ключом идемпотентности не отправляется.
-//   * после успеха баланс перечитывается и сверяется с target. Апи может
-//     ответить success и при этом применить не то, что мы просили —
-//     верификация превращает «надеемся» в «проверили».
+// Rules intentionally enforced strictly:
+//   * dry-run is the default. A request is sent only when live: true.
+//   * a plan with a blocking guard is not sent; force cannot bypass some guards
+//     (see guards.HARD_CODES).
+//   * a write-off with the same idempotency key is not sent again.
+//   * after success, the balance is reread and checked against target. The API
+//     may return success without applying what we requested; verification
+//     turns an assumption into a check.
 // ----------------------------------------------------------------------------
 
 const { config } = require('./config');
@@ -41,12 +41,12 @@ async function postWriteoff(payload, { cfg = config, ...rest } = {}) {
   const data = envelope.data || {};
 
   if (data.status !== 'success') {
-    // errors — объект вида { amount: "invalidAmount", charge: "invalidAmount" }
+    // errors is an object like { amount: "invalidAmount", charge: "invalidAmount" }
     const perField = data.errors
       ? Object.entries(data.errors).map(([field, keyword]) => `${field}: ${keyword}`).join(', ')
       : '';
     throw new WriteoffError(
-      `отпис не применён: status=${data.status}` +
+      `write-off was not applied: status=${data.status}` +
       `${data.error ? ` error=${data.error}` : ''}` +
       `${perField ? ` (${perField})` : ''}`,
       { data, envelope },
@@ -56,7 +56,7 @@ async function postWriteoff(payload, { cfg = config, ...rest } = {}) {
   return { writeoffId: data.writeoffId ?? null, data, envelope };
 }
 
-// Перечитывает баланс и сверяет с ожиданием.
+// Rereads the balance and checks it against the expected value.
 async function verify({ customerId, creditId, expectedDebt, cfg = config, ...rest }) {
   const { rows } = await fetchCreditRows({ customerId, creditId, cfg, ...rest });
   const balance = buildBalance(selectCreditRow(rows, creditId));
@@ -85,27 +85,26 @@ async function applyPlan(plan, options = {}) {
 
   if (hasUnforgivable(plan.findings)) {
     throw new WriteoffError(
-      'план содержит гарды, которые не снимаются force: ' +
+      'plan contains guards that cannot be bypassed with force: ' +
       plan.findings.filter((f) => f.severity === 'error').map((f) => f.code).join(', '),
       { findings: plan.findings },
     );
   }
   if (hasBlocking(plan.findings) && !force) {
     throw new WriteoffError(
-      'план заблокирован гардами: ' +
+      'plan is blocked by guards: ' +
       plan.findings.filter((f) => f.severity === 'error').map((f) => f.code).join(', ') +
-      ' (осознанно снять — force: true)',
+      ' (bypass explicitly with force: true)',
       { findings: plan.findings },
     );
   }
   if (plan.amount === 0) {
-    throw new WriteoffError('нечего отписывать: amount = 0', { plan });
+    throw new WriteoffError('nothing to write off: amount = 0', { plan });
   }
 
-  // Отказ при повторе — отдельный флаг, а не часть force. force снимает
-  // гарды данных, и смешивать это с идемпотентностью нельзя: получилось бы,
-  // что «дай повторить» незаметно означает ещё и «игнорируй проверки».
-  // По умолчанию выключен, см. config.IDEMPOTENCY_GUARD.
+  // Duplicate blocking uses a separate flag, not force. force bypasses data
+  // guards; combining this with idempotency would make “allow retry” silently
+  // mean “ignore checks” too. Disabled by default; see config.IDEMPOTENCY_GUARD.
   if (idempotencyGuard) {
     const already = await audit.findApplied(plan.idempotencyKey, { dir: auditDir });
     if (already && !force) {
@@ -113,7 +112,7 @@ async function applyPlan(plan, options = {}) {
         status: 'already_applied',
         idempotencyKey: plan.idempotencyKey,
         previous: already,
-        message: `эта проводка уже проведена ${already.ts} (writeoffId=${already.writeoffId ?? '?'})`,
+        message: `this write-off was already applied at ${already.ts} (writeoffId=${already.writeoffId ?? '?'})`,
       };
     }
 
@@ -124,8 +123,8 @@ async function applyPlan(plan, options = {}) {
         idempotencyKey: plan.idempotencyKey,
         previous: dangling,
         message:
-          `в аудите есть незакрытая попытка от ${dangling.ts}: запрос был отправлен, ` +
-          `а результат не записан. Проверьте кредит в CRM вручную, прежде чем повторять.`,
+          `the audit log contains an unfinished attempt from ${dangling.ts}: the request was sent, ` +
+          `but its result was not recorded. Check the credit in CRM manually before retrying.`,
       };
     }
   }
@@ -156,7 +155,7 @@ async function applyPlan(plan, options = {}) {
       payload,
       path: WRITEOFF_PATH,
       transport: cfg.WRITEOFF_TRANSPORT,
-      message: `dry-run: запрос НЕ отправлен. Сумма к отпису ${fromMinor(plan.amount)}.`,
+      message: `dry-run: request NOT sent. Write-off amount: ${fromMinor(plan.amount)}.`,
     };
   }
 
@@ -207,10 +206,10 @@ async function applyPlan(plan, options = {}) {
     payload,
     verification,
     message: verification.ok
-      ? `отпис проведён, долг стал ${fromMinor(verification.debtAfter)} — совпадает с target`
-      : `отпис проведён (writeoffId=${result.writeoffId}), но долг стал ` +
-        `${fromMinor(verification.debtAfter)} вместо ${fromMinor(plan.target)} ` +
-        `(расхождение ${fromMinor(verification.delta)}) — разберитесь вручную`,
+      ? `write-off applied; debt is now ${fromMinor(verification.debtAfter)}, matching target`
+      : `write-off applied (writeoffId=${result.writeoffId}), but debt is now ` +
+        `${fromMinor(verification.debtAfter)} instead of ${fromMinor(plan.target)} ` +
+        `(difference ${fromMinor(verification.delta)}) — investigate manually`,
   };
 }
 

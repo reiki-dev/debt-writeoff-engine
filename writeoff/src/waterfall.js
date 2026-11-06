@@ -1,21 +1,21 @@
 'use strict';
 
 // ----------------------------------------------------------------------------
-// Водопад: раскладывает сумму к отпису по корзинам в заданном порядке.
+// Waterfall: allocate the write-off amount across buckets in the defined order.
 //
-// Чистая функция на целых haléřích. Ни сети, ни конфига, ни времени —
-// поэтому её поведение полностью покрывается тестами, а именно она решает,
-// сколько денег списать с каждой корзины.
+// Pure function using integer haléře. No network, configuration, or clock
+// access; tests fully cover its behavior. This function determines the amount
+// written off from each bucket.
 //
-// Инвариант, который держим: allocation[b] <= buckets[b] для каждой корзины,
-// и sum(allocation) <= amount. Апи отдаёт invalidAmount, если компонент
-// больше остатка — до этого доводить нельзя.
+// Invariants: allocation[b] <= buckets[b] for every bucket and
+// sum(allocation) <= amount. The API returns invalidAmount if a component
+// exceeds its remaining balance; avoid that condition.
 // ----------------------------------------------------------------------------
 
 function allocate({ buckets, order, amount }) {
-  if (!Number.isInteger(amount)) throw new TypeError(`allocate: amount не целое: ${amount}`);
-  if (amount < 0) throw new RangeError(`allocate: amount отрицательный: ${amount}`);
-  if (!Array.isArray(order)) throw new TypeError('allocate: order не массив');
+  if (!Number.isInteger(amount)) throw new TypeError(`allocate: amount is not an integer: ${amount}`);
+  if (amount < 0) throw new RangeError(`allocate: amount is negative: ${amount}`);
+  if (!Array.isArray(order)) throw new TypeError('allocate: order is not an array');
 
   const allocation = {};
   const steps = [];
@@ -24,10 +24,10 @@ function allocate({ buckets, order, amount }) {
   for (const bucket of order) {
     const available = buckets[bucket] ?? 0;
     if (!Number.isInteger(available)) {
-      throw new TypeError(`allocate: остаток корзины ${bucket} не целый: ${available}`);
+      throw new TypeError(`allocate: balance for bucket ${bucket} is not an integer: ${available}`);
     }
     if (available < 0) {
-      throw new RangeError(`allocate: отрицательный остаток корзины ${bucket}: ${available}`);
+      throw new RangeError(`allocate: negative balance for bucket ${bucket}: ${available}`);
     }
     if (left === 0 || available === 0) {
       steps.push({ bucket, available, taken: 0, leftAfter: left });
@@ -41,10 +41,10 @@ function allocate({ buckets, order, amount }) {
   }
 
   return {
-    allocation,                              // только непустые корзины
+    allocation,                              // Nonzero buckets only.
     allocated: amount - left,
-    shortfall: left,                         // > 0 => корзин не хватило на target
-    steps,                                   // полный след для отчёта и аудита
+    shortfall: left,                         // > 0 => insufficient bucket capacity for target
+    steps,                                   // Full trace for report and audit.
     capacity: order.reduce((acc, b) => acc + (buckets[b] ?? 0), 0),
   };
 }

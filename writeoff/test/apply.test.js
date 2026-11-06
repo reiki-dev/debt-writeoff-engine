@@ -28,7 +28,7 @@ function planFor(overrides, target) {
 
 const OK_WRITEOFF = { status: 200, data: { writeoffId: '81495', status: 'success' } };
 
-test('dry-run не делает ни одного запроса', async () => {
+test('dry-run sends no requests', async () => {
   const dir = await tmpDir();
   const fetchImpl = fakeFetch([]);
   const plan = planFor({ l_tax8: '2000.00', l_amount: '20000.00' }, '20000.00');
@@ -38,13 +38,13 @@ test('dry-run не делает ни одного запроса', async () => {
   assert.equal(result.status, 'dry_run');
   assert.equal(fetchImpl.calls.length, 0);
   assert.equal(result.payload.tax8, '2000.00');
-  assert.deepEqual(await audit.readAll({ dir }), []);   // и в аудит ничего не пишет
+  assert.deepEqual(await audit.readAll({ dir }), []);   // and writes nothing to the audit log
 });
 
-test('живая проводка отправляет POST, пишет аудит и сверяет остаток', async () => {
+test('live write-off sends POST, writes audit, and verifies the balance', async () => {
   const dir = await tmpDir();
   const plan = planFor({ l_tax8: '2000.00', l_amount: '20000.00' }, '20000.00');
-  // после отписа в системе остаётся только тело
+  // Only principal remains in the system after the write-off.
   const after = assocEnvelope([{ l_amount: '20000.00' }]);
   const fetchImpl = fakeFetch([OK_WRITEOFF, after]);
 
@@ -67,23 +67,23 @@ test('живая проводка отправляет POST, пишет ауди
   assert.deepEqual(events, ['intent', 'applied', 'verified']);
 });
 
-test('intent пишется ДО запроса, чтобы падение не потерялось', async () => {
+test('intent is written BEFORE the request so a crash is not lost', async () => {
   const dir = await tmpDir();
   const plan = planFor({ l_amount: '10000.00' }, '5000.00');
-  const fetchImpl = async () => { throw new Error('соединение оборвалось'); };
+  const fetchImpl = async () => { throw new Error('connection was interrupted'); };
 
   await assert.rejects(
     () => applyPlan(plan, { cfg, auditDir: dir, live: true, fetchImpl }),
-    /соединение оборвалось/,
+    /connection was interrupted/,
   );
 
   const events = (await audit.readAll({ dir })).map((e) => e.event);
   assert.deepEqual(events, ['intent', 'failed']);
 });
 
-test('по умолчанию повтор проходит — отказ отдан верхней системе', async () => {
-  // CRM сам не даёт провести один и тот же отпис дважды, поэтому
-  // модуль по умолчанию не отказывает: он отправляет и позволяет ответить CRM.
+test('retries are allowed by default; the upstream system handles rejection', async () => {
+  // CRM rejects applying the same write-off twice, so by default the module
+  // sends the request and lets CRM return its response.
   const dir = await tmpDir();
   const plan = planFor({ l_amount: '10000.00' }, '5000.00');
   const after = assocEnvelope([{ l_amount: '5000.00' }]);
@@ -101,12 +101,12 @@ test('по умолчанию повтор проходит — отказ от�
   assert.equal(second.status, 'applied');
   assert.equal(secondFetch.calls.length, 2);
 
-  // но в аудите остаются обе проводки
+  // Both write-offs remain in the audit log.
   const events = (await audit.readAll({ dir })).map((e) => e.event);
   assert.deepEqual(events, ['intent', 'applied', 'verified', 'intent', 'applied', 'verified']);
 });
 
-test('с включённым флагом незакрытая попытка блокирует повтор', async () => {
+test('with the guard enabled, an unfinished attempt blocks a retry', async () => {
   const dir = await tmpDir();
   const plan = planFor({ l_amount: '10000.00' }, '5000.00');
   await audit.append({ event: 'intent', idempotencyKey: plan.idempotencyKey }, { dir });
@@ -116,10 +116,10 @@ test('с включённым флагом незакрытая попытка �
   });
 
   assert.equal(result.status, 'dangling_intent');
-  assert.match(result.message, /отправлен/);
+  assert.match(result.message, /request was sent/);
 });
 
-test('с включённым флагом повторная проводка не уходит второй раз', async () => {
+test('with the guard enabled, a repeated write-off is not sent twice', async () => {
   const dir = await tmpDir();
   const plan = planFor({ l_amount: '10000.00' }, '5000.00');
   const after = assocEnvelope([{ l_amount: '5000.00' }]);
@@ -140,7 +140,7 @@ test('с включённым флагом повторная проводка �
   assert.equal(second.previous.writeoffId, '81495');
 });
 
-test('data.status=failed это ошибка, несмотря на HTTP 200 и status 200', async () => {
+test('data.status=failed is an error despite HTTP 200 and status 200', async () => {
   const dir = await tmpDir();
   const plan = planFor({ l_amount: '10000.00' }, '5000.00');
   const failed = {
@@ -161,10 +161,10 @@ test('data.status=failed это ошибка, несмотря на HTTP 200 и 
   assert.deepEqual(events, ['intent', 'failed']);
 });
 
-test('успех апи с неверным остатком помечается applied_unverified', async () => {
+test('API success with an unexpected balance is marked applied_unverified', async () => {
   const dir = await tmpDir();
   const plan = planFor({ l_tax8: '2000.00', l_amount: '20000.00' }, '20000.00');
-  // апи сказал success, а долг уехал не туда
+  // API returned success, but the debt did not reach the target.
   const after = assocEnvelope([{ l_amount: '21000.00' }]);
 
   const result = await applyPlan(plan, {
@@ -173,13 +173,13 @@ test('успех апи с неверным остатком помечаетс�
 
   assert.equal(result.status, 'applied_unverified');
   assert.equal(result.verification.ok, false);
-  assert.match(result.message, /вместо/);
+  assert.match(result.message, /instead of/);
 
   const events = (await audit.readAll({ dir })).map((e) => e.event);
   assert.deepEqual(events, ['intent', 'applied', 'mismatch']);
 });
 
-test('фатальные гарды не снимаются force', async () => {
+test('hard guards cannot be bypassed with force', async () => {
   const dir = await tmpDir();
   const plan = planFor(
     { l_amount: '10000.00', l_administrative_fee: '480.00', debt: '10480.00' },
@@ -189,11 +189,11 @@ test('фатальные гарды не снимаются force', async () => 
 
   await assert.rejects(
     () => applyPlan(plan, { cfg, auditDir: dir, live: true, force: true, fetchImpl: fakeFetch([]) }),
-    /не снимаются force/,
+    /cannot be bypassed with force/,
   );
 });
 
-test('force снимает отказ по идемпотентности, когда флаг включён', async () => {
+test('force bypasses the idempotency block when enabled', async () => {
   const dir = await tmpDir();
   const plan = planFor({ l_amount: '10000.00' }, '5000.00');
   const after = assocEnvelope([{ l_amount: '5000.00' }]);
@@ -213,7 +213,7 @@ test('force снимает отказ по идемпотентности, ко�
   assert.equal(repeatFetch.calls.length, 2);
 });
 
-test('пустая сумма не отправляется даже с force', async () => {
+test('a zero amount is not sent even with force', async () => {
   const dir = await tmpDir();
   const nothingToDo = computePlan({
     balance: buildBalance(normalize(assocEnvelope([{ l_amount: '1000.00' }]).data)[0]),
@@ -224,6 +224,6 @@ test('пустая сумма не отправляется даже с force', 
     () => applyPlan(nothingToDo, {
       cfg, auditDir: dir, live: true, force: true, fetchImpl: fakeFetch([]),
     }),
-    /нечего отписывать/,
+    /nothing to write off/,
   );
 });

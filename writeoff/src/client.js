@@ -1,13 +1,13 @@
 'use strict';
 
 // ----------------------------------------------------------------------------
-// Тонкий клиент CRM API.
+// Thin CRM API client.
 //
-// Два правила, из которых растёт весь остальной код:
-//   1. HTTP 200 != успех. Настоящий результат лежит в конверте:
+// Two rules that shape the rest of the code:
+//   1. HTTP 200 != success. The actual result is in the response envelope:
 //        { status, error, message, data: { status: "success"|"failed", ... } }
-//   2. Ключ по умолчанию идёт заголовком x-api-key (так просит спека),
-//      но апи принимает и ?apiKey= — переключается через CRM_AUTH_MODE.
+//   2. By default, the key is sent in the x-api-key header (as specified),
+//      but the API also accepts ?apiKey=; CRM_AUTH_MODE selects the method.
 // ----------------------------------------------------------------------------
 
 const { config } = require('./config');
@@ -30,7 +30,7 @@ function buildUrl(baseUrl, path, query, authMode, apiKey) {
   return url;
 }
 
-// Возвращает распарсенный конверт целиком — интерпретация выше, в вызывающем коде.
+// Return the parsed envelope; the calling code interprets it.
 async function call(path, options = {}) {
   const {
     method = 'GET',
@@ -41,7 +41,7 @@ async function call(path, options = {}) {
   } = options;
 
   if (typeof fetchImpl !== 'function') {
-    throw new ApiError('fetch недоступен — нужен Node 18+ или передайте fetchImpl');
+    throw new ApiError('fetch is unavailable — Node 18+ is required or provide fetchImpl');
   }
 
   const url = buildUrl(cfg.BASE_URL, path, query, cfg.AUTH_MODE, cfg.API_KEY);
@@ -66,9 +66,9 @@ async function call(path, options = {}) {
     text = await res.text();
   } catch (err) {
     if (err.name === 'AbortError') {
-      throw new ApiError(`таймаут ${cfg.HTTP_TIMEOUT_MS} мс: ${method} ${path}`, { path, method });
+      throw new ApiError(`timeout after ${cfg.HTTP_TIMEOUT_MS} ms: ${method} ${path}`, { path, method });
     }
-    throw new ApiError(`сетевая ошибка: ${method} ${path}: ${err.message}`, { path, method, cause: err });
+    throw new ApiError(`network error: ${method} ${path}: ${err.message}`, { path, method, cause: err });
   } finally {
     clearTimeout(timer);
   }
@@ -78,14 +78,14 @@ async function call(path, options = {}) {
     envelope = JSON.parse(text);
   } catch {
     throw new ApiError(
-      `ответ не JSON (HTTP ${res.status}) на ${method} ${path}: ${text.slice(0, 300)}`,
+      `response is not JSON (HTTP ${res.status}) for ${method} ${path}: ${text.slice(0, 300)}`,
       { httpStatus: res.status, path, method, raw: text.slice(0, 2000) },
     );
   }
 
   if (envelope.status !== 200) {
     throw new ApiError(
-      `API вернул status=${envelope.status} на ${method} ${path}` +
+      `API returned status=${envelope.status} for ${method} ${path}` +
       `${envelope.error ? ` (${envelope.error})` : ''}` +
       `${envelope.message ? `: ${envelope.message}` : ''}`,
       { apiStatus: envelope.status, apiError: envelope.error, apiMessage: envelope.message, path, method },

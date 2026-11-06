@@ -1,16 +1,15 @@
 'use strict';
 
 // ----------------------------------------------------------------------------
-// Zapis poznamky do Google Sheets, list konfigurovany pro poznamky (krok 2).
+// Write a note to the Google Sheets tab configured for notes (step 2).
 //
-// Hledame radek podle ID klienta ve sloupci A a zapisujeme do prvni prazdne
-// bunky od sloupce X (index 23) doprava — kazda bunka v radku od X je
-// "Poznámka o průběhu řešení".
+// Find the row by customer ID in column A and write to the first empty cell
+// from column X (index 23) onward; each cell in the row from X is a
+// "Poznámka o průběhu řešení" column.
 //
-// Rozhodnuti (potvrzeno operatorem): pipeline bezi az na uplnem konci, kdyz
-// je komunikace s klientem uz uzavrena — pokud klient v teto tabulce vubec
-// neni, jde o chybu dat, a krok se natvrdo zastavi s chybovou hláškou, misto
-// aby tise vytvarel novy radek nebo pokracoval dal.
+// Run the pipeline at the very end, after communication with the customer is
+// complete. If the customer is missing from this sheet, treat it as a data
+// error and stop with a clear message instead of silently adding a row or continuing.
 // ----------------------------------------------------------------------------
 
 const { google } = require('googleapis');
@@ -30,7 +29,7 @@ function getSheetsClient() {
   return sheetsClientPromise;
 }
 
-// 0-based index sloupce -> pismeno (0 -> A, 23 -> X, 26 -> AA, ...).
+// Convert a zero-based column index to a letter (0 -> A, 23 -> X, 26 -> AA, ...).
 function colToLetter(index0) {
   let n = index0 + 1;
   let s = '';

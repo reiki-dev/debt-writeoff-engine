@@ -138,16 +138,15 @@ function requireAuth(req, res, next) {
   try {
     const payload = jwt.verify(auth.slice(7), JWT_SECRET);
 
-    // Роль берём из users.json, а НЕ из токена, хотя она там лежит.
+    // Read the role from users.json, not the token, even though it is stored there.
     //
-    // Токен живёт 8 часов. Если доверять роли внутри него, снятие прав
-    // вступит в силу только когда токен истечёт — то есть у разжалованного
-    // оператора останется доступ к отпису почти на рабочий день. Для системы,
-    // которая двигает деньги, отзыв прав должен действовать сразу.
+    // Tokens last 8 hours. If we trust the role inside the token, revoked
+    // permissions would take effect only after expiry, leaving a demoted
+    // operator with write-off access for most of a workday. For a system that
+    // moves money, permission revocation must take effect immediately.
     //
-    // Файл маленький и уже читается при каждом логине, так что чтение на
-    // запрос ничего не стоит. Побочный плюс: удаление строки из users.json
-    // немедленно выкидывает человека из системы.
+    // The file is small and already read at login, so reading it per request is
+    // inexpensive. Removing a user from users.json also revokes access immediately.
     const user = loadUsers().find((u) => String(u.id) === String(payload.id));
     if (!user) return res.status(401).json({ error: 'Uživatel již neexistuje' });
 
@@ -162,9 +161,9 @@ function requireAuth(req, res, next) {
   }
 }
 
-// ── Права ─────────────────────────────────────────────────────────────────────
-// Проверяется на каждом роуте. Скрытая вкладка в интерфейсе — удобство,
-// а не защита: без этой прослойки роль mail дойдёт до отписа через curl.
+// ── Permissions ──────────────────────────────────────────────────────────────
+// Check permissions on every route. A hidden interface tab is a convenience,
+// not security; without this layer, the mail role could invoke write-off with curl.
 function requireCap(cap) {
   return function (req, res, next) {
     if (!access.can(req.user && req.user.role, cap)) {
@@ -207,9 +206,9 @@ app.post('/auth/login', loginLimiter, async (req, res) => {
   res.json({ token, username: user.username, role, caps: access.capsOf(role) });
 });
 
-// GET /auth/me — кто я и что мне можно. Фронт рисует вкладки по этому ответу,
-// а не по собственной таблице ролей: два источника правды рано или поздно
-// разойдутся, и разойдутся именно в сторону лишнего доступа.
+// GET /auth/me — return the current user and capabilities. The frontend renders
+// tabs from this response rather than its own role table, avoiding conflicting
+// sources of truth that could grant excess access.
 app.get('/auth/me', requireAuth, (req, res) => {
   res.json({
     username: req.user.username,
@@ -383,10 +382,10 @@ function mergeData(loansRaw, paymentsRaw, customerId) {
   };
 }
 
-// ── Uživatelé ─────────────────────────────────────────────────────────────────
-// Только чтение и смена роли. Создание пользователя и смена пароля остаются
-// в `npm run add-user`: чтобы завести человека, всё равно нужен доступ к серверу,
-// а пароли тогда вообще не проходят через браузер.
+// ── Users ────────────────────────────────────────────────────────────────────
+// Read-only access and role changes only. User creation and password changes
+// remain in `npm run add-user`, which requires server access and keeps passwords
+// out of the browser.
 
 function saveUsers(users) {
   fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2) + '\n');
@@ -420,9 +419,8 @@ app.patch('/api/users/:id/role', requireAuth, requireCap(access.CAPS.USERS), (re
   const previous = access.normalizeRole(target.role);
   if (previous === role) return res.json({ ok: true, unchanged: true, role });
 
-  // Защита от самоблокировки: если это последний администратор, снимать
-  // с него роль нельзя — иначе управлять правами станет некому, и починить
-  // это можно будет только правкой users.json на сервере руками.
+  // Prevent self-lockout: the last administrator cannot lose that role, or no
+  // one could manage permissions without editing users.json on the server.
   const adminsAfter = users.filter((u) => {
     const r = String(u.id) === String(target.id) ? role : access.normalizeRole(u.role);
     return r === 'admin';
@@ -441,28 +439,26 @@ app.patch('/api/users/:id/role', requireAuth, requireCap(access.CAPS.USERS), (re
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
-// Odpis dluhu — единственная часть сайта, которая пишет в CRM.
+// Debt write-off is the only part of the site that writes to the CRM.
 //
-// Три правила, из которых сделаны эти роуты:
+// These routes follow three rules:
 //
-//  1. Плану из браузера доверять нельзя. apply получает только ID, целевой
-//     остаток и ключ идемпотентности, который видел оператор. План собирается
-//     на сервере заново из живого экспорта, и если ключи разошлись — значит
-//     остатки изменились с момента просмотра, и мы отвечаем 409, а не проводим
-//     устаревшую раскладку из зависшей вкладки.
+//  1. Do not trust a plan from the browser. apply receives only IDs, target
+//     balance, and the idempotency key shown to the operator. The server rebuilds
+//     the plan from a fresh export; if the keys differ, balances changed since
+//     the preview, so return 409 instead of applying a stale plan from an idle tab.
 //
-//  2. Оператор берётся из токена, а не из тела запроса. Иначе аудит-лог
-//     ничего не доказывает.
+//  2. Read the operator from the token, not the request body, or the audit log
+//     would prove nothing.
 //
-//  3. Гарды модуля — это отказ, а не предупреждение. Здесь нет никакого force:
-//     если план заблокирован, роут возвращает 409 с находками, и оператор
-//     разбирается через probe. Снятие гардов остаётся только в CLI, под рукой
-//     того, кто понимает, что снимает.
+//  3. Module guards block the operation; they are not warnings. There is no
+//     force option here: a blocked plan returns 409 with findings, and the
+//     operator investigates with probe. Only the CLI can bypass eligible guards.
 // ══════════════════════════════════════════════════════════════════════════════
 
 const { money } = writeoff;
 
-// Отпис — операция с деньгами, ей свой лимит, а не общий с логином.
+// Write-off moves money, so it has a separate rate limit from login.
 const writeoffLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 20,
@@ -475,8 +471,8 @@ function isId(value) {
   return /^\d+$/.test(String(value || ''));
 }
 
-// Суммы наружу отдаём двумя видами: minor для логики и строку для показа.
-// Клиент не должен считать деньги сам — ни во float, ни в чём-либо ещё.
+// Return amounts both as minor units for logic and strings for display.
+// The client must not calculate money itself, using floats or otherwise.
 function kc(minor) {
   return { minor, text: money.fromMinor(minor) };
 }
@@ -542,12 +538,11 @@ function serializePlan(plan) {
   };
 }
 
-// Познамка в CRM. Имя оператора подставляется здесь, из токена: в карточке
-// кредита должно быть видно, кто отписал, а не только в нашем логе.
-// Часовой пояс познамки. Явно, а не через локальное время процесса:
-// в контейнере TZ не задана, поэтому «локальное» время там — UTC, и оператор
-// в Праze читал бы штамп на два часа назад. Intl сам разбирается с переходом
-// на летнее время, так что CEST/CET не надо помнить руками.
+// CRM note. The operator name comes from the token so the credit record shows
+// who performed the write-off, not only the internal log.
+// Set the note timezone explicitly instead of using process-local time. The
+// container has no TZ setting, so local time would be UTC. Intl handles daylight
+// saving transitions, avoiding manual CEST/CET calculations.
 const NOTE_TZ = process.env.NOTE_TIMEZONE || 'Europe/Prague';
 
 // sv-SE uses the same timestamp format as other locale settings.
@@ -561,9 +556,9 @@ function noteStamp(date = new Date()) {
   return noteStampFmt.format(date).replace(',', '');
 }
 
-// Суммы в чешском виде: «6 971,26». Неразрывный пробел, который добавляет
-// cs-CZ, заменяем обычным — познамка уезжает в легаси-PHP, и лишние
-// экзотические символы в текстовом поле ни к чему.
+// Format amounts using Czech conventions, e.g. "6 971,26". Replace the
+// non-breaking space added by cs-CZ with a regular space because the note is
+// sent to legacy PHP, where unusual whitespace is unnecessary.
 function fmtKc(minor) {
   return (minor / 100)
     .toLocaleString('cs-CZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -584,8 +579,8 @@ function sendWriteoffError(res, err) {
     return res.status(400).json({ error: err.message });
   }
   if (name === 'ExportError') {
-    // «не найдено», «вернулось две строки», «столбец неоднозначен» —
-    // все они означают, что данные не такие, как мы думаем.
+    // “Not found”, “two rows returned”, and “ambiguous column” all mean the
+    // data differs from our assumptions.
     return res.status(409).json({ error: err.message });
   }
   if (name === 'WriteoffError') {
@@ -599,8 +594,8 @@ function sendWriteoffError(res, err) {
 }
 
 // GET /api/writeoff/credits/:customerId
-// Кредиты клиента с ненулевым долгом. Роль CC не видит Přehled půjček,
-// поэтому кредит она выбирает здесь, а не глазами по таблице.
+// Customer credits with nonzero debt. The CC role cannot view "Přehled půjček",
+// so it selects a credit here rather than from the table.
 app.get('/api/writeoff/credits/:customerId', requireAuth, requireCap(access.CAPS.WRITEOFF),
   writeoffLimiter, async (req, res) => {
     const { customerId } = req.params;
@@ -617,7 +612,7 @@ app.get('/api/writeoff/credits/:customerId', requireAuth, requireCap(access.CAPS
   });
 
 // GET /api/writeoff/balance/:customerId/:creditId
-// probe: остатки по корзинам, сверка суммы с системным долгом, диагностика.
+// probe: bucket balances, reconciliation with system debt, and diagnostics.
 app.get('/api/writeoff/balance/:customerId/:creditId', requireAuth,
   requireCap(access.CAPS.WRITEOFF), writeoffLimiter, async (req, res) => {
     const { customerId, creditId } = req.params;
@@ -634,7 +629,7 @@ app.get('/api/writeoff/balance/:customerId/:creditId', requireAuth,
   });
 
 // POST /api/writeoff/preview { customerId, creditId, target }
-// Побочек нет: можно нажимать сколько угодно.
+// No side effects; this can be run repeatedly.
 app.post('/api/writeoff/preview', requireAuth, requireCap(access.CAPS.WRITEOFF),
   writeoffLimiter, async (req, res) => {
     const { customerId, creditId, target } = req.body || {};
@@ -653,7 +648,7 @@ app.post('/api/writeoff/preview', requireAuth, requireCap(access.CAPS.WRITEOFF),
   });
 
 // POST /api/writeoff/apply { customerId, creditId, target, idempotencyKey, notes? }
-// Единственный роут сайта, который двигает деньги.
+// The only route on the site that moves money.
 app.post('/api/writeoff/apply', requireAuth, requireCap(access.CAPS.WRITEOFF),
   writeoffLimiter, async (req, res) => {
     const { customerId, creditId, target, idempotencyKey, notes } = req.body || {};
@@ -665,7 +660,7 @@ app.post('/api/writeoff/apply', requireAuth, requireCap(access.CAPS.WRITEOFF),
     }
 
     try {
-      // План собираем заново — тому, что прислал браузер, не верим.
+      // Rebuild the plan; do not trust the browser's version.
       const plan = await writeoff.buildPlan({ customerId, creditId, target });
 
       if (plan.idempotencyKey !== idempotencyKey) {
@@ -705,8 +700,8 @@ app.post('/api/writeoff/apply', requireAuth, requireCap(access.CAPS.WRITEOFF),
         previous: result.previous || null,
       };
 
-      // applied_unverified и dangling_intent — это «человек, посмотри».
-      // Отдаём 409, чтобы фронт не покрасил их зелёным как успех.
+      // applied_unverified and dangling_intent require manual review.
+      // Return 409 so the frontend does not display them as successful.
       const needsHuman = ['applied_unverified', 'dangling_intent'].includes(result.status);
       res.status(needsHuman ? 409 : 200).json(payload);
 
@@ -717,7 +712,7 @@ app.post('/api/writeoff/apply', requireAuth, requireCap(access.CAPS.WRITEOFF),
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// Splátkový kalendář — pipeline (kroky 1-10).
+// "Splátkový kalendář" (payment schedule) pipeline, steps 1-10.
 //
 // Autosearch pujcek s dluhem pouziva stejnou routu jako zalozka Odpis dluhu
 // (GET /api/writeoff/credits/:customerId) — kdo ma cap PIPELINE, ma podle
@@ -809,8 +804,8 @@ app.get('/api/pipeline/:operationId/calendar-preview.png', requireAuth, requireC
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 // Debug endpoint — returns raw CRM response for a customer.
-// Отдаёт сырой ответ CRM вместе с картой полей, поэтому доступен только
-// админу: обычному оператору внутренние имена столбцов не нужны.
+// Returns the raw CRM response and field map, so only admins can access it;
+// ordinary operators do not need internal column names.
 app.get('/debug/:customerId', (req, res, next) => {
   if (mockCrm.isMockMode() || process.env.NODE_ENV === 'production') return res.sendStatus(404);
   if (!isId(req.params.customerId)) return res.sendStatus(404);

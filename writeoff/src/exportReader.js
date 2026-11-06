@@ -1,24 +1,24 @@
 'use strict';
 
 // ----------------------------------------------------------------------------
-// Чтение export/export и превращение ответа в строки, из которых можно
-// безопасно достать столбец ПО ИМЕНИ.
+// Read export/export and convert the response to rows so columns can be
+// retrieved safely BY NAME.
 //
-// Почему это отдельный файл с гардами, а не три строки inline:
+// Why this is a separate file with guards instead of a few inline lines:
 //
-// export/export умеет два формата, и они принципиально разные по риску.
+// export/export supports two formats with fundamentally different risks.
 //   * format=assoc  -> data.data = [ { "l_amount_93": "12345.67", ... } ]
-//                      ключи приходят с индексом столбца в суффиксе
-//   * без format    -> data.data = [ [ "2001", "1001", ... ] ]
-//                      плоские массивы, соответствие держится ТОЛЬКО на
-//                      порядке ключей в data.names
+//                      keys include the column index as a suffix
+//   * without format -> data.data = [ [ "2001", "1001", ... ] ]
+//                      flat arrays; mapping depends ONLY on the order of keys
+//                      in data.names
 //
-// Второй формат для модуля, который двигает деньги, опасен: сдвиг на один
-// элемент даёт тихо неверную сумму в правильно выглядящем отчёте. Поэтому
-// позиционный режим поддержан, но с жёсткой проверкой длины строки против
-// числа имён — при любом расхождении бросаем, а не «дочитываем что есть».
+// The second format is risky for a module that moves money: an offset of one
+// element can silently produce a wrong total in a plausible-looking report.
+// Positional mode is supported, but row length must match the number of names;
+// any mismatch throws instead of reading only the available values.
 //
-// По умолчанию модуль просит assoc.
+// The module requests assoc by default.
 // ----------------------------------------------------------------------------
 
 const { call } = require('./client');
@@ -32,8 +32,8 @@ class ExportError extends Error {
   }
 }
 
-// Столбец приходит либо ровно как `debt`, либо как `debt_21` (индекс в экспорте).
-// Ищем сначала точное совпадение, потом по шаблону — и ловим неоднозначность.
+// A column may be named exactly `debt` or `debt_21` (its export index).
+// Try an exact match first, then a pattern, and detect ambiguous matches.
 function resolveKey(row, column) {
   if (Object.prototype.hasOwnProperty.call(row, column)) return column;
 
@@ -43,16 +43,16 @@ function resolveKey(row, column) {
   if (hits.length === 0) return undefined;
   if (hits.length > 1) {
     throw new ExportError(
-      `столбец «${column}» разрешается неоднозначно: ${hits.join(', ')} — ` +
-      `уточните имя в src/buckets.js`,
+      `column "${column}" resolves ambiguously: ${hits.join(', ')} — ` +
+      `specify its name in src/buckets.js`,
       { column, candidates: hits },
     );
   }
   return hits[0];
 }
 
-// Достаёт значение столбца. undefined = столбца в экспорте нет
-// (это не то же самое, что "" или "0.00" — их вернём как есть).
+// Get a column value. undefined means the column is missing from the export
+// (unlike "" or "0.00", which are returned as-is).
 function pick(row, column) {
   const key = resolveKey(row, column);
   return key === undefined ? undefined : row[key];
@@ -62,40 +62,40 @@ function hasColumn(row, column) {
   return resolveKey(row, column) !== undefined;
 }
 
-// Приводит любой из двух форматов к массиву объектов.
+// Convert either format to an array of objects.
 function normalize(payload) {
   if (!payload || typeof payload !== 'object') {
-    throw new ExportError('в ответе нет data', { payload });
+    throw new ExportError('response has no data', { payload });
   }
   const { names, data } = payload;
   if (!names || typeof names !== 'object') {
-    throw new ExportError('в ответе нет data.names', { keys: Object.keys(payload) });
+    throw new ExportError('response has no data.names', { keys: Object.keys(payload) });
   }
   if (!Array.isArray(data)) {
-    throw new ExportError('data.data не массив', { got: typeof data });
+    throw new ExportError('data.data is not an array', { got: typeof data });
   }
   if (data.length === 0) return [];
 
-  // assoc: строки уже объекты
+  // assoc: rows are already objects
   if (!Array.isArray(data[0])) {
     for (const [i, row] of data.entries()) {
       if (Array.isArray(row) || row === null || typeof row !== 'object') {
-        throw new ExportError(`строка ${i}: смешанные форматы в data.data`, { index: i });
+        throw new ExportError(`row ${i}: mixed formats in data.data`, { index: i });
       }
     }
     return data;
   }
 
-  // позиционный: зипуем по порядку ключей names, но только при полном совпадении длин
+  // Positional: zip values by names order, but only when lengths match exactly.
   const columns = Object.keys(names);
   return data.map((row, i) => {
     if (!Array.isArray(row)) {
-      throw new ExportError(`строка ${i}: смешанные форматы в data.data`, { index: i });
+      throw new ExportError(`row ${i}: mixed formats in data.data`, { index: i });
     }
     if (row.length !== columns.length) {
       throw new ExportError(
-        `строка ${i}: ${row.length} значений против ${columns.length} имён в data.names — ` +
-        `позиционное сопоставление ненадёжно, запросите format=assoc`,
+        `row ${i}: ${row.length} values but ${columns.length} names in data.names — ` +
+        `positional mapping is unreliable; request format=assoc`,
         { index: i, values: row.length, names: columns.length },
       );
     }
@@ -114,11 +114,11 @@ async function fetchExport({ id, filter, format = 'assoc', limit = 0, cfg = conf
   return { rows: normalize(envelope.data), names: envelope.data.names, envelope };
 }
 
-// Строки одного кредита. creditId необязателен: без него вернутся все
-// кредиты клиента (нужно, чтобы показать оператору выбор).
+// Rows for one credit. creditId is optional; if omitted, return all of the
+// customer's credits so the operator can choose one.
 async function fetchCreditRows({ customerId, creditId, cfg = config, ...rest } = {}) {
   if (customerId === undefined || customerId === null || customerId === '') {
-    throw new ExportError('customerId обязателен');
+    throw new ExportError('customerId is required');
   }
 
   const filter = [

@@ -3,14 +3,11 @@
 const { toMinor, fromMinor } = require('../../writeoff/src/money');
 
 // ----------------------------------------------------------------------------
-// Jediny zdroj pravdy pro vypocet splatkoveho grafiku.
+// Single source of truth for payment schedule calculations.
 //
-// Puvodne byl vypocet zdvojeny: starsi predchozi klient volala
-// require('./schedule') (computeSchedule), ktery v repozitari fyzicky
-// neexistuje, a puvodni uzivatelske rozhrani melo vlastni JS implementaci
-// (calcSchedule()) primo v prohlizeci. Tady je jedna implementace a bezi na
-// serveru — stejny princip jako u odpisu (server.js: "Planu z prohlizece
-// duverovat nelze", plan se pocita znovu). Klient smi jen ukazat nahled.
+// Keep one implementation on the server so calculations are consistent.
+// As with write-off plans, recompute on the server rather than trusting a plan
+// from the browser; the client may display a preview only.
 // ----------------------------------------------------------------------------
 
 function guard(code, message, data = {}) {
@@ -46,8 +43,8 @@ function toCzech(year, monthIndex0, day) {
   return `${pp(day)}.${pp(monthIndex0 + 1)}.${year}`;
 }
 
-// Vstup: startDate 'YYYY-MM-DD', total (Kc), a bud perPayment, nebo months.
-// Vystup: { ok, guards, months, perPayment, lastAmount, total, startDate,
+// Input: startDate 'YYYY-MM-DD', total (Kč), and either perPayment or months.
+// Output: { ok, guards, months, perPayment, lastAmount, total, startDate,
 //           endDate, fmtStart, fmtEnd, rows: [{n, date, amount}] }
 function computeSchedule({ startDate, total, perPayment, months } = {}) {
   const guards = [];
