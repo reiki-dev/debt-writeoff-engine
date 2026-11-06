@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+coverage/
 package-lock.json.log
 
 # Environment variables & credentials
