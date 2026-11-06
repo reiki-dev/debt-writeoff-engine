@@ -1,170 +1,207 @@
 # Debt Write-off Engine
 
-A financial portfolio project with a multi-table loan audit viewer and deterministic debt write-off engine.
+[![CI](https://github.com/reiki-dev/debt-writeoff-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/reiki-dev/debt-writeoff-engine/actions/workflows/ci.yml)
+![Node](https://img.shields.io/badge/node-%E2%89%A518.17-339933)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
-Designed with **defensive programming principles**, **zero-float integer arithmetic**, **strict invariant reconciliation**, and **optimistic concurrency control**.
+A back-office tool for consumer-lending operations: it lets an operator reduce a customer's debt to an agreed target, spreading the write-off across the debt buckets in a fixed priority order, and it refuses to touch the books unless every number reconciles.
 
----
-
-## ⚡ Executive Summary & Highlights
-
-- **Zero-Dependency Financial Math Core**: All monetary calculations are performed in integer minor currency units (haléře/cents) to mathematically prevent IEEE 754 floating-point drift (`0.1 + 0.2 !== 0.3`).
-- **Deterministic 16-Bucket Waterfall**: Debt write-offs strictly allocate `debt − target` down an enforced legal priority hierarchy (`tax12` down to `amount`).
-- **Hard Invariant Reconcilation (`debt_mismatch`)**: Verifies that the sum of all 16 debt buckets exactly matches the CRM system total before moving any money. Any discrepancy $\ge 0.01$ Kč triggers a hard block (`HTTP 409`) that cannot be bypassed even with `--force`.
-- **Optimistic Concurrency & Stale-Data Guard**: The server never trusts a write-off plan sent by the browser. Upon `apply`, it rebuilds the plan from live data and verifies the SHA-256 idempotency hash. If balances changed while the operator viewed the screen, the operation is rejected (`HTTP 409 Conflict`).
-- **Two-Phase Append-Only Audit Logging**: Non-repudiation audit trail writes an `intent` record **before** the CRM request, followed by `applied`/`failed`, followed by an automated post-verification balance re-read (`verified`/`mismatch`).
-- **53 Automated Unit Tests**: Fully self-contained test suite running in $< 300\text{ ms}$ without network or external database dependencies.
-- **Hybrid Integration & RPA**: Combines REST API integration with headless Playwright browser automation for legacy CRM forms lacking public endpoints, featuring screenshot visual verification checkpoints for human-in-the-loop safety.
-- **Dynamic RBAC & Instant Revocation**: Capabilities are derived per-request from persistent storage rather than stale JWT claims, ensuring instant privilege revocation for write operations.
+Node.js, Express, no database. The write-off core has **zero runtime dependencies**, uses **integer money only**, and is covered by dependency-free tests that run in well under a second. A web UI (roles, preview, apply) and a CLI sit on top of it.
 
 ---
 
-## 🏗️ Architecture & Write-off Flow
+## 60-second demo
 
-```mermaid
-flowchart TD
-    A[Operator in Browser] -->|Enter Customer ID & Target Debt| B[Express Server /writeoff/preview]
-    B --> C[Fetch Live CRM Balance: CRM_EXPORT_ID]
-    C --> D{Sum of 16 Buckets == System Debt?}
-    D -->|Delta >= 0.01| E[HARD BLOCK: debt_mismatch 409]
-    D -->|Exact Match| F[Run Waterfall Allocation Engine]
-    F --> G[Generate Idempotency Hash: sha256]
-    G --> H[Return Preview Plan to Operator]
-    
-    A -->|Confirm Apply with Idempotency Key| I[Express Server /writeoff/apply]
-    I --> J[Re-fetch Live Balance & Rebuild Plan]
-    J --> K{New Hash == Preview Hash?}
-    K -->|No: Balances Changed| L[Reject: 409 Stale Data Conflict]
-    K -->|Yes: Data Intact| M[Write Audit Record: intent]
-    M --> N[Call CRM Write-off Endpoint]
-    N -->|Success| O[Re-read Balance: Post-Verification]
-    O -->|Debt == Target| P[Write Audit Record: verified]
-    O -->|Debt != Target| Q[Write Audit Record: mismatch alert]
+No credentials and no external systems needed: demo mode serves synthetic loans from an in-process mock CRM.
+
+```bash
+npm ci
+npm run start:demo        # MOCK_MODE=true, random JWT secret
 ```
 
----
+Open <http://localhost:3000> and sign in:
 
-## 🧩 Core Modules
-
-### 1. Loan Overview & Audit (`Přehled půjček`)
-Aggregates and reconciles data across CRM tables:
-- **Registry & Ledger Join**: Merges loan contracts (`CRM_LOANS_EXPORT_ID`) with granular per-transaction payment logs (`CRM_PAYMENTS_EXPORT_ID`).
-- **Extension Chain Resolution**: Detects chains of loan extensions (`origin_id`). Properly categorizes extension fees vs net principal disbursements, eliminating duplicate principal counting across roll-overs.
-- **Collection Detection**: Automatically identifies sold loans post-assignment to collection agencies.
-- **Double-Counting Protection**: Distinguishes full transaction sizes from per-credit allocations to accurately report component payments.
-
-### 2. Debt Write-off Engine (`writeoff/`)
-Located in [`writeoff/`](writeoff/), this is a standalone library with zero external dependencies and 53 unit tests.
-
-#### Priority Waterfall Order:
-```
-tax12 → tax11 → tax10 → tax9 → tax8 → tax7 → tax6 → tax2 → tax3 → tax4 → tax5 → tax1
-      → charge (Cena/Náklady) → cinterest (Zákonný úrok) → late_fee (Smluvní pokuta) → amount (Jistina)
-```
-
-#### Guard Invariants:
-| Guard Code | Severity | Description |
+| User | Password | Role |
 |---|---|---|
-| `debt_mismatch` | **Fatal Error** (no force) | Sum of 16 buckets $\ne$ system debt |
-| `target_invalid` | **Fatal Error** (no force) | Target is negative, non-numeric, or fractional |
-| `nothing_to_write_off` | Error | System debt is already $\le$ target debt |
-| `insufficient_capacity`| Error | Sum of write-off buckets cannot satisfy target |
-| `court_costs_included` | Warning | Court fees (`tax9`/`tax10`) were affected |
-| `charge_source_suspicious` | Warning | Fee balance exceeds historical contracted fee |
-| `prior_writeoff` | Warning | Loan already had previous write-offs |
+| `admin` | `admin123` | everything |
+| `operator` | `operator123` | write-off, settlement pipeline |
+| `viewer` | `viewer123` | read-only loan overview |
 
-### 3. Payment Schedule & RPA Pipeline (`pipeline/`)
-A 10-step state machine orchestrating debt settlement:
-1. Balance verification via export reader
-2. Audit sync to reporting sheets
-3. Customer status category update
-4. Loan status category update
-5. Human-in-the-loop debt collection reminder pause
-6. Automated waterfall debt write-off
-7. Headless Playwright automation to open legacy CRM schedule form
-8. Element screenshot capture of form bounding box for visual operator confirmation
-9. Risk tagging & blacklisting
-10. Customer file audit notes
+Then open the write-off tab and try customer `1001`, loan `2001`, target `2500`. You get a preview of how the reduction is spread across the buckets, and applying it runs the real engine end to end (plan, audit record, write, re-read, verification) against the mock transport.
 
----
+Customer `1002` shows a loan that was sold to a collection agency.
 
-## 👥 Role-Based Access Control (RBAC)
+CLI rehearsal (prints the same flow, sends nothing):
 
-| Role | Loan Overview (`prehled`) | Debt Write-Off (`writeoff`) | Settlement Pipeline (`pipeline`) | User Management (`users`) |
-|---|:---:|:---:|:---:|:---:|
-| `admin` | ✅ | ✅ | ✅ | ✅ |
-| `cc` (Call Center) | ❌ | ✅ | ✅ | ❌ |
-| `mail` (Viewer) | ✅ | ❌ | ❌ | ❌ |
-
-- **Security over convenience**: Hidden tabs in UI are backed by explicit route-level middleware (`requireCap()`).
-- **Real-time permission sync**: Roles are verified against database storage per-request, preventing the typical 8-hour JWT claim revocation vulnerability.
-- **Last-admin guard**: Prevents accidental demotion of the final administrator account.
-
----
-
-## 🚀 Quick Start (Demo / Mock Mode)
-
-The repository includes a built-in **Mock Data Adapter** (`mock-crm.js`) that enables instant local execution with realistic synthetic data without needing access to a live CRM.
-
-### 1. Install Dependencies
-```bash
-npm install
-```
-
-### 2. Configure Environment (Optional for Mock Mode)
-```bash
-cp .env.example .env
-```
-*(If no `.env` or `API_KEY` is present, the server automatically defaults to `MOCK_MODE=true`)*
-
-### 3. Start Application
-```bash
-npm start
-```
-Open **[http://localhost:3000](http://localhost:3000)** in your browser.
-
-### 4. Pre-seeded Demo Credentials
-
-| Username | Password | Role | Capabilities |
-|---|---|---|---|
-| `admin` | `admin123` | `admin` | Full access (all tabs + user management) |
-| `operator` | `operator123` | `cc` | Debt write-off + Settlement pipeline |
-| `viewer` | `viewer123` | `mail` | Read-only loan overview |
-
-### 5. Demo Client IDs to Test
-- **Customer `1001`**: Standard case with active loan `2001` (debt: `9,471.26 Kč`), extension chain loan `2002`, and repaid loan `2003`.
-  - In *Odpis dluhu*, enter Customer `1001`, Loan `2001`, and target `2500` to see the waterfall allocation in action.
-- **Customer `1002`**: Case demonstrating a loan sold to a collection agency (`Postoupeno / prodáno`).
-
----
-
-## 🧪 Automated Testing
-
-Run the test suite:
-```bash
-npm test
-```
-
-Expected output:
-```text
-# tests 49
-# suites 0
-# pass 49
-# fail 0
-# duration_ms ~300ms
-```
-
-To run dry-run CLI rehearsals:
 ```bash
 node writeoff/tools/rehearsal.js
 ```
 
 ---
 
-## 🐳 Docker Deployment
+## The problem
 
-Run with Docker Compose:
-```bash
-docker compose up --build
+A debt write-off lowers what a customer owes to a target amount. The amount to forgive (`debt - target`) must be taken from the debt in a legally prescribed order: costs and court fees first, then fees, interest, contractual penalty and principal last. The debt is stored in 16 separate buckets, and the books must still add up afterwards.
+
+The failure modes are expensive and quiet:
+
+- an off-by-one-haléř error (1/100 of a Kč) that fails an audit,
+- a vendor column that *looks* like a remaining balance but is not, so every sum still reconciles until the first partial payment,
+- a stale screen: the operator previews one balance, someone else changes it, and the write-off is posted against different numbers,
+- an API that answers `success` while the balance did not become what was requested.
+
+This project is built around not trusting any of those.
+
+---
+
+## Design decisions
+
+The interesting part of the repository. Each decision names the file where it lives.
+
+1. **Integer money, fail on excess precision** — `writeoff/src/money.js`
+   Amounts are integers in minor units (haléře). Conversion from user input throws a `MoneyError` on a third decimal place or an unsafe integer instead of rounding. There is no floating point on the money path of the write-off core.
+
+2. **Functional core, imperative shell** — `writeoff/src/waterfall.js`, `plan.js`
+   `allocate()` and `computePlan()` are pure functions: same inputs, same plan, and the plan carries the `steps` that explain each bucket. Fetching balances (`buildPlan`) and sending (`applyPlan`) are separate, thin layers around it. This is why the core is testable without a network.
+
+3. **Reconciliation as a gate that cannot be overridden** — `writeoff/src/guards.js`
+   Before any money moves, the sum of the 16 buckets must equal the system's total debt. A mismatch is a hard stop (`debt_mismatch`, HTTP 409) that `--force` cannot bypass: *an operator may accept a risk, but must never be allowed to proceed when the system does not understand its own data.* Softer guards (court costs touched, prior write-off, suspicious fee source) are warnings an operator can acknowledge.
+
+4. **The client's plan is never trusted** — `server.js`, `/api/writeoff/apply`
+   Apply receives only ids, the target and the idempotency key from the preview. The server rebuilds the plan from live data and compares a SHA-256 fingerprint; if anything changed in between, it answers `409 plan_changed`. This is optimistic concurrency with the stale-data check done against the data, not against a signature.
+
+5. **Write-ahead audit and post-write verification** — `writeoff/src/audit.js`, `apply.js`
+   An `intent` record is appended *before* the request; then `applied` or `failed`; then the balance is re-read and compared with the target (`verified` or `mismatch`). A process that dies between the POST and the response leaves a `dangling_intent` that the next run detects. `success` from the remote API is a claim to verify, not a fact.
+
+6. **Capabilities resolved per request, not read from the token** — `access.js`, `server.js`
+   A role is looked up in storage on every request, so revoking a role takes effect immediately even while the user holds a valid JWT. Routes check a capability (`requireCap`), not a role name. Hiding a tab in the UI is not security; every route enforces its own rule. A last-admin guard prevents locking yourself out.
+
+7. **Mock mode is an explicit opt-in** — `mock-crm.js`, `server.js`
+   In a system that moves money, "no API key, so fall back to demo data with a built-in secret" is fail-open. Mock mode requires `MOCK_MODE=true`; a missing or weak `JWT_SECRET` stops the process at startup. In demo mode the real write-off code runs against an injected mock transport, so the demo shows the same guards and verification as the real thing instead of a separate fake path.
+
+8. **Defensive input handling in the UI** — `public/esc.js`, `server.js`
+   Strings that originate in the external system (statuses, product names, guard messages) are escaped before they reach `innerHTML`. The server sends security headers through `helmet`. The login handler always runs a password comparison, so response time does not reveal whether a user exists.
+
+---
+
+## What the bucket allocation looks like
+
+The reduction is taken in this order (highest priority first):
+
 ```
-The `./audit` volume is automatically mounted to preserve append-only write-off logs and idempotency stores across container lifecycles.
+tax12 → tax11 → tax10 → tax9 → tax8 → tax7 → tax6 → tax2 → tax3 → tax4 → tax5 → tax1
+      → charge (fees) → cinterest (statutory interest) → late_fee (contractual penalty) → amount (principal)
+```
+
+Guards (`writeoff/src/guards.js`):
+
+| Code | Severity | Meaning |
+|---|---|---|
+| `debt_mismatch` | fatal, no override | sum of the 16 buckets differs from the system debt |
+| `target_invalid` | fatal, no override | target is negative, non-numeric or has a fractional haléř |
+| `nothing_to_write_off` | error | debt is already at or below the target |
+| `insufficient_capacity` | error | the write-off buckets cannot cover `debt - target` |
+| `charge_source_suspicious` | warning | remaining fee exceeds what was ever charged (a column mix-up signal) |
+| `court_costs_included` | warning | court fees would be reduced |
+| `prior_writeoff` | warning | the loan already had a write-off |
+
+The idempotency guard (refuse a repeat posting of the same plan) exists but is **off by default**, because the key is derived from the debt state, which changes by itself after a real posting, and the remote API already rejects a duplicate. The audit log is written either way.
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TD
+    A[Operator in browser] -->|customer, loan, target| B[POST preview]
+    B --> C[Fetch balance export]
+    C --> D{16 buckets == system debt?}
+    D -->|no| E[HARD BLOCK: debt_mismatch, 409]
+    D -->|yes| F[computePlan: pure waterfall]
+    F --> G[Plan + SHA-256 key to the operator]
+
+    A -->|confirm with key| I[POST apply]
+    I --> J[Re-fetch balance, rebuild plan]
+    J --> K{key == preview key?}
+    K -->|no| L[409 plan_changed]
+    K -->|yes| M[Audit: intent]
+    M --> N[Send write-off]
+    N --> O[Re-read balance]
+    O -->|debt == target| P[Audit: verified]
+    O -->|otherwise| Q[Audit: mismatch, HTTP 409]
+```
+
+| Part | Where | State |
+|---|---|---|
+| Write-off core and CLI | `writeoff/` | the main piece; fully unit-tested |
+| Web server, auth, RBAC, UI | `server.js`, `access.js`, `public/` | covered by HTTP tests in mock mode |
+| Loan overview report | `server.js`, `mock-crm.js` | read-only report, see limitations |
+| Settlement pipeline | `pipeline/` | **experimental**, see limitations |
+
+---
+
+## Running it for real
+
+```bash
+cp .env.example .env     # then fill in; never commit .env
+npm start                # refuses to start without a strong JWT_SECRET
+```
+
+Without `MOCK_MODE=true` the server requires `API_KEY` and `API_BASE_URL`. Every setting is documented in `.env.example` (`writeoff/.env.example` for the CLI).
+
+Write-off CLI (dry run by default; only `--live` sends anything):
+
+```bash
+node writeoff/bin/cli.js probe   --customer 1001 --credit 2001
+node writeoff/bin/cli.js preview --customer 1001 --credit 2001 --target 25000
+node writeoff/bin/cli.js apply   --customer 1001 --credit 2001 --target 25000          # prints the request, sends nothing
+node writeoff/bin/cli.js apply   --customer 1001 --credit 2001 --target 25000 --live
+```
+
+Docker: `docker compose up --build` (the `audit/` folder is mounted so the append-only log survives rebuilds). The compose file currently also expects a Google service-account file, see limitations.
+
+---
+
+## Testing
+
+```bash
+npm run check       # eslint + BOM check + all tests
+npm run coverage    # c8 coverage report
+```
+
+Tests use only `node:test` and `supertest`; they run offline against synthetic data. They cover the money module, the waterfall, the guards, apply/audit/verification, the HTTP layer (login, RBAC matrix, per-request role lookup, `plan_changed`, audit order, last-admin guard) and the pipeline's schedule arithmetic (month-end clamping, leap years, exact remainder in the last payment).
+
+CI runs lint, the BOM check and the tests on Node 18, 20 and 22.
+
+---
+
+## Known limitations
+
+Stated up front, because they are the first things a reviewer would find.
+
+- **The loan overview sums money as floats.** `mergeData()` in `server.js` aggregates about twenty numeric fields per row with `Number`. It is a read-only report and tolerates it; every *write* goes through the integer core. Moving it to integer arithmetic is the obvious next step.
+- **`pipeline/` is experimental.** The 10-step settlement flow, including the headless-browser step that fills a legacy form, contains parameters and selectors that are marked as unverified guesses in the code. Its state is in memory, so a crash between steps loses the operator's context. Treat it as a prototype.
+- **Audit reads are O(n).** With the idempotency guard on, each apply reads the whole JSONL log. That is fine at a few operations per day; at scale it needs an index or SQLite.
+- **The CSP allows inline scripts.** The single-page UI uses inline scripts and handlers, so the policy has `'unsafe-inline'`. A nonce-based policy needs the UI split into files.
+- **Docker demo is heavier than it should be.** The image includes Chromium for the pipeline, and the compose file mounts a Google credentials file that does not exist in a fresh checkout.
+- **One process, JSON user store, JSONL audit.** Right-sized for a handful of operators; not a multi-instance design.
+- **UI language.** The interface is in Czech, the code and docs are in English.
+
+---
+
+## Project layout
+
+```
+writeoff/        core: money, waterfall, guards, plan, apply, audit, CLI, tests
+pipeline/        experimental settlement flow (schedule, CRM calls, sheets, browser form)
+public/          single-page UI (index.html) and esc.js
+server.js        Express app: auth, RBAC, routes
+access.js        role -> capability table
+mock-crm.js      synthetic loans and export rows for demo mode
+writeoff-bridge.js  glue between the server and the write-off core
+test/            HTTP, security, schedule, access, fixture tests
+```
+
+## License
+
+MIT, see [LICENSE](LICENSE).
