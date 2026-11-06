@@ -41,6 +41,29 @@ test('dry-run sends no requests', async () => {
   assert.deepEqual(await audit.readAll({ dir }), []);   // and writes nothing to the audit log
 });
 
+test('audit history indexes a directory and reuses it for later lookups', async () => {
+  const dir = await tmpDir();
+  const key = 'same-idempotency-key';
+  await audit.append({ event: 'intent', idempotencyKey: key }, { dir });
+  await audit.append({ event: 'applied', idempotencyKey: key }, { dir });
+
+  const originalReadFile = fsp.readFile;
+  let reads = 0;
+  fsp.readFile = function (...args) {
+    reads += 1;
+    return originalReadFile.apply(this, args);
+  };
+  try {
+    assert.equal(reads, 0);
+    assert.equal((await audit.history(key, { dir })).length, 2);
+    assert.equal(reads, 1); // First lookup loads the JSONL once.
+    assert.equal((await audit.history(key, { dir })).length, 2);
+    assert.equal(reads, 1); // Later lookups use the in-memory index.
+  } finally {
+    fsp.readFile = originalReadFile;
+  }
+});
+
 test('live write-off sends POST, writes audit, and verifies the balance', async () => {
   const dir = await tmpDir();
   const plan = planFor({ l_tax8: '2000.00', l_amount: '20000.00' }, '20000.00');

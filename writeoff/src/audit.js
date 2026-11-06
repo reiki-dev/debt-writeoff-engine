@@ -24,6 +24,24 @@ const os = require('node:os');
 const { config } = require('./config');
 
 const FILE = 'writeoff.jsonl';
+// Cache is scoped to the resolved audit directory so independent runs/tests do
+// not share state. Each value keeps the parsed log as well as its key index.
+const indexes = new Map();
+
+function directoryKey(dir) {
+  return path.resolve(dir);
+}
+
+function indexEntries(entries) {
+  const byKey = new Map();
+  for (const entry of entries) {
+    if (entry.idempotencyKey === undefined) continue;
+    const matches = byKey.get(entry.idempotencyKey) || [];
+    matches.push(entry);
+    byKey.set(entry.idempotencyKey, matches);
+  }
+  return byKey;
+}
 
 function auditPath(dir) {
   return path.join(dir, FILE);
@@ -39,13 +57,22 @@ async function append(entry, { dir = config.AUDIT_DIR } = {}) {
   };
   // flag 'a' + one line = atomic append within the writing process
   await fsp.appendFile(auditPath(dir), `${JSON.stringify(record)}\n`, 'utf8');
+  const cached = indexes.get(directoryKey(dir));
+  if (cached) {
+    cached.entries.push(record);
+    if (record.idempotencyKey !== undefined) {
+      const matches = cached.byKey.get(record.idempotencyKey) || [];
+      matches.push(record);
+      cached.byKey.set(record.idempotencyKey, matches);
+    }
+  }
   return record;
 }
 
 async function readAll({ dir = config.AUDIT_DIR } = {}) {
   const file = auditPath(dir);
-  if (!fs.existsSync(file)) return [];
-  const text = await fsp.readFile(file, 'utf8');
+  let text = '';
+  if (fs.existsSync(file)) text = await fsp.readFile(file, 'utf8');
   const out = [];
   for (const [i, line] of text.split('\n').entries()) {
     if (line.trim() === '') continue;
@@ -56,13 +83,24 @@ async function readAll({ dir = config.AUDIT_DIR } = {}) {
       out.push({ ts: null, event: 'corrupt_line', line: i + 1, raw: line.slice(0, 500) });
     }
   }
+  indexes.set(directoryKey(dir), { entries: out, byKey: indexEntries(out) });
   return out;
+}
+
+async function getIndex({ dir = config.AUDIT_DIR } = {}) {
+  const key = directoryKey(dir);
+  let cached = indexes.get(key);
+  if (!cached) {
+    await readAll({ dir });
+    cached = indexes.get(key);
+  }
+  return cached;
 }
 
 // Everything known about this idempotency key.
 async function history(key, opts = {}) {
-  const all = await readAll(opts);
-  return all.filter((entry) => entry.idempotencyKey === key);
+  const index = await getIndex(opts);
+  return [...(index.byKey.get(key) || [])];
 }
 
 // Whether a write-off with this key has already succeeded.
