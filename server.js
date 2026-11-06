@@ -31,6 +31,9 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       scriptSrc: ["'self'", 'cdnjs.cloudflare.com', "'unsafe-inline'"],
+      // helmet defaults script-src-attr to 'none', which silently disables every
+      // inline onclick/onchange handler the single-page UI is built on.
+      scriptSrcAttr: ["'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'", 'cdnjs.cloudflare.com'],
       imgSrc: ["'self'", 'data:', 'blob:'],
     },
@@ -840,7 +843,7 @@ app.get('/debug/:customerId', (req, res, next) => {
 });
 
 if (require.main === module) app.listen(PORT, () => {
-  console.log(`✅  Debt Portfolio Platform → http://localhost:${PORT}`);
+  console.log(`✅  Debt Write-off Engine → http://localhost:${PORT}`);
   if (mockCrm.isMockMode()) {
     console.log('ℹ️   Running in MOCK MODE (Offline). Demo clients: 1001, 1002');
   }
