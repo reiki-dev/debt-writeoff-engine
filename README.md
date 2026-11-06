@@ -6,7 +6,7 @@
 
 A back-office tool for consumer-lending operations: it lets an operator reduce a customer's debt to an agreed target, spreading the write-off across the debt buckets in a fixed priority order, and it refuses to touch the books unless every number reconciles.
 
-Node.js, Express, no database. The write-off core has **zero runtime dependencies**, uses **integer money only**, and is covered by dependency-free tests that run in well under a second. A web UI (roles, preview, apply) and a CLI sit on top of it.
+Node.js, Express, no database. The write-off core has **zero runtime dependencies**, uses **integer money only**, and is covered by unit tests for the core that run in under a second (the full suite takes a few seconds). A web UI (roles, preview, apply) and a CLI sit on top of it.
 
 ---
 
