@@ -29,14 +29,10 @@ if (!mockCrm.isMockMode() && !(process.env.API_KEY || '').trim()) {
 const app = express();
 // Behind the single reverse proxy, use the forwarded client IP so rate limits do not see every user as the proxy.
 app.set('trust proxy', 1);
-// The UI currently contains inline scripts/styles; unsafe-inline is a known CSP limitation until the page is nonce-based.
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
-      scriptSrc: ["'self'", 'cdnjs.cloudflare.com', "'unsafe-inline'"],
-      // helmet defaults script-src-attr to 'none', which silently disables every
-      // inline onclick/onchange handler the single-page UI is built on.
-      scriptSrcAttr: ["'unsafe-inline'"],
+      scriptSrc: ["'self'", 'cdnjs.cloudflare.com'],
       styleSrc: ["'self'", "'unsafe-inline'", 'cdnjs.cloudflare.com'],
       imgSrc: ["'self'", 'data:', 'blob:'],
     },
