@@ -27,6 +27,8 @@ Open <http://localhost:3000> and sign in:
 | `operator` | `operator123` | write-off, settlement pipeline |
 | `viewer` | `viewer123` | read-only loan overview |
 
+These accounts come from `users.demo.json` and are created on first start; change them before any real use (`npm run add-user`).
+
 Then open the write-off tab and try customer `1001`, loan `2001`, target `2500`. You get a preview of how the reduction is spread across the buckets, and applying it runs the real engine end to end (plan, audit record, write, re-read, verification) against the mock transport.
 
 Customer `1002` shows a loan that was sold to a collection agency.
@@ -158,7 +160,15 @@ node writeoff/bin/cli.js apply   --customer 1001 --credit 2001 --target 25000   
 node writeoff/bin/cli.js apply   --customer 1001 --credit 2001 --target 25000 --live
 ```
 
-Docker: `docker compose up --build` (the `audit/` folder is mounted so the append-only log survives rebuilds). The compose file currently also expects a Google service-account file, see limitations.
+Docker:
+
+```bash
+docker compose up --build                      # demo on http://localhost:3001, no .env needed
+docker compose --profile app up --build app    # real config from .env, users in ./data
+docker compose --profile pipeline up --build pipeline   # adds Chromium and the Google key mount
+```
+
+The `audit/` folder is mounted so the append-only log survives rebuilds. Chromium is installed only for the `pipeline` profile. User accounts live in `users.json`, which is git-ignored and created from `users.demo.json` on first start.
 
 ---
 
@@ -183,7 +193,6 @@ Stated up front, because they are the first things a reviewer would find.
 - **`pipeline/` is experimental.** The 10-step settlement flow, including the headless-browser step that fills a legacy form, contains parameters and selectors that are marked as unverified guesses in the code. Its state is in memory, so a crash between steps loses the operator's context. Treat it as a prototype.
 - **Audit reads are O(n).** With the idempotency guard on, each apply reads the whole JSONL log. That is fine at a few operations per day; at scale it needs an index or SQLite.
 - **The CSP allows inline scripts.** The single-page UI uses inline scripts and handlers, so the policy has `'unsafe-inline'`. A nonce-based policy needs the UI split into files.
-- **Docker demo is heavier than it should be.** The image includes Chromium for the pipeline, and the compose file mounts a Google credentials file that does not exist in a fresh checkout.
 - **One process, JSON user store, JSONL audit.** Right-sized for a handful of operators; not a multi-instance design.
 - **UI language.** The interface is in Czech, the code and docs are in English.
 
@@ -199,6 +208,7 @@ server.js        Express app: auth, RBAC, routes
 access.js        role -> capability table
 mock-crm.js      synthetic loans and export rows for demo mode
 writeoff-bridge.js  glue between the server and the write-off core
+users.demo.json  demo accounts, copied to users.json on first start
 test/            HTTP, security, schedule, access, fixture tests
 ```
 
