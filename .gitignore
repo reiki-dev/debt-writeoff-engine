@@ -13,7 +13,7 @@ google-service-account*.json
 
 # Runtime & Audit Logs
 *.log
-audit/*.jsonl
+audit/*
 !audit/.gitkeep
 
 # OS & Editor
