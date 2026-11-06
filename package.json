@@ -1,0 +1,28 @@
+{
+  "name": "debt-writeoff-engine",
+  "version": "1.0.0",
+  "description": "Financial portfolio dashboard, multi-table loan debt auditor, and idempotent waterfall debt write-off engine",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "start:demo": "node scripts/start-demo.js",
+    "dev": "nodemon server.js",
+    "test": "node --test \"writeoff/test/*.test.js\" \"test/*.test.js\"",
+    "lint:bom": "node scripts/check-bom.js",
+    "add-user": "node scripts/add-user.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.7",
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.2.0",
+    "googleapis": "^144.0.0",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.2",
+    "playwright": "1.62.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}
