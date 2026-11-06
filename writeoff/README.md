@@ -7,7 +7,7 @@ amount across buckets in the defined order, checks the result with guards, sends
 the transaction to `special/writeoff`, and verifies that the debt reached its target.
 
 ```
-npm test        # 43 tests, no network
+npm test        # unit tests, no network, < 1 s
 node bin/cli.js help
 ```
 
