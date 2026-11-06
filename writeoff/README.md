@@ -11,7 +11,7 @@ npm test        # 43 tests, no network
 node bin/cli.js help
 ```
 
-There are no dependencies beyond Node ≥ 18.17 (global `fetch` is required).
+There are no dependencies beyond Node ≥ 18.18 (global `fetch` is required).
 
 ## How write-off amounts are calculated
 

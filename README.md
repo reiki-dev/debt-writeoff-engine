@@ -1,7 +1,7 @@
 # Debt Write-off Engine
 
 [![CI](https://github.com/reiki-dev/debt-writeoff-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/reiki-dev/debt-writeoff-engine/actions/workflows/ci.yml)
-![Node](https://img.shields.io/badge/node-%E2%89%A518.17-339933)
+![Node](https://img.shields.io/badge/node-%E2%89%A518.18-339933)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 A back-office tool for consumer-lending operations: it lets an operator reduce a customer's debt to an agreed target, spreading the write-off across the debt buckets in a fixed priority order, and it refuses to touch the books unless every number reconciles.
