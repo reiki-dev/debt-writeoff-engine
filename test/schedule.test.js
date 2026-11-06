@@ -27,9 +27,10 @@ test('last payment receives the remaining amount and integer schedule totals mat
   assert.equal(result.rows.reduce((sum, row) => sum + row.amount, 0), 100);
 });
 
-test('rounds displayed payment amounts to whole currency units', () => {
+test('preserves fractional currency amounts to minor-unit precision', () => {
   const result = schedule({ total: 10, perPayment: 3.4 });
-  assert.deepEqual(result.rows.map(r => r.amount), [3, 3, 3]);
+  assert.deepEqual(result.rows.map(r => r.amount), [3.4, 3.4, 3.2]);
+  assert.equal(result.rows.reduce((sum, row) => sum + row.amount, 0), result.total);
 });
 
 test('rejects zero, negative, nonnumeric, missing and malformed inputs', () => {
@@ -41,11 +42,35 @@ test('rejects zero, negative, nonnumeric, missing and malformed inputs', () => {
   assert.equal(schedule({ startDate: 'not-a-date' }).ok, false);
 });
 
-test.todo('fractional totals should remain exact after rounding displayed rows; current whole-unit rounding can make their sum differ from total', () => {
-  const result = schedule({ total: 10, perPayment: 3.4 });
+test('fractional totals remain exact when split across payments', () => {
+  const result = schedule({ total: 1000.10, perPayment: 333.33 });
+  assert.deepEqual(result.rows.map(r => r.amount), [333.33, 333.33, 333.33, 0.11]);
   assert.equal(result.rows.reduce((sum, row) => sum + row.amount, 0), result.total);
 });
 
-test.todo('calendar-invalid dates such as 2023-02-31 should be rejected; current input validation checks shape only', () => {
+test('calendar-invalid dates are rejected with a guard code', () => {
   assert.equal(schedule({ startDate: '2023-02-31' }).ok, false);
+  assert.equal(schedule({ startDate: '2024-13-01' }).guards[0].code, 'start_date_invalid');
+});
+
+test('total smaller than perPayment produces one exact payment', () => {
+  const result = schedule({ total: 12.34, perPayment: 100 });
+  assert.deepEqual(result.rows.map(r => r.amount), [12.34]);
+});
+
+test('exactly divisible minor-unit total has equal payments', () => {
+  const result = schedule({ total: 99.99, perPayment: 33.33 });
+  assert.deepEqual(result.rows.map(r => r.amount), [33.33, 33.33, 33.33]);
+});
+
+test('leap-day start remains on the last valid day in later February years', () => {
+  const result = computeSchedule({ startDate: '2024-02-29', total: 60, months: 13 });
+  assert.equal(result.rows[0].date, '2024-02-29');
+  assert.equal(result.rows[12].date, '2025-02-28');
+});
+
+test('rejects currency precision beyond minor units with a clear guard', () => {
+  const result = schedule({ total: 10.001 });
+  assert.equal(result.ok, false);
+  assert.equal(result.guards[0].code, 'amount_precision_invalid');
 });

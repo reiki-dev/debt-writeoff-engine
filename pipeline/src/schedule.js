@@ -1,5 +1,7 @@
 'use strict';
 
+const { toMinor, fromMinor } = require('../../writeoff/src/money');
+
 // ----------------------------------------------------------------------------
 // Jediny zdroj pravdy pro vypocet splatkoveho grafiku.
 //
@@ -16,8 +18,15 @@ function guard(code, message, data = {}) {
 }
 
 function daysInMonth(year, monthIndex0) {
-  return new Date(Date.UTC(year, monthIndex0 + 1, 0)).getUTCDate();
+  const month = monthIndex0 + 1;
+  if (month === 2) {
+    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    return leap ? 29 : 28;
+  }
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
 }
+
+function currency(minor) { return Number(fromMinor(minor)); }
 
 function pp(n) { return String(n).padStart(2, '0'); }
 
@@ -81,21 +90,51 @@ function computeSchedule({ startDate, total, perPayment, months } = {}) {
   const monthIndex0 = Number(moStr) - 1;
   const day = Number(dStr);
 
-  if (monthsNum === undefined) {
-    monthsNum = (perPaymentNum >= totalNum) ? 1 : Math.ceil(totalNum / perPaymentNum);
-  }
-  if (perPaymentNum === undefined) {
-    perPaymentNum = Math.ceil(totalNum / monthsNum);
+  if (monthIndex0 < 0 || monthIndex0 > 11 || day < 1
+      || day > daysInMonth(year, monthIndex0)) {
+    return { ok: false, guards: [guard('start_date_invalid',
+      `startDate musi byt platne kalendarni datum, prislo ${JSON.stringify(startDate)}`)] };
   }
 
+  let totalMinor;
+  let perPaymentMinor;
+  // Currency inputs support the same two decimal places as money.js; reject
+  // finer precision instead of silently rounding it in the schedule.
+  try {
+    totalMinor = toMinor(String(total), 'total');
+  } catch (error) {
+    return { ok: false, guards: [guard('amount_precision_invalid', error.message)] };
+  }
+  if (totalMinor <= 0) {
+    return { ok: false, guards: [guard('total_invalid', 'total musi byt kladne cislo')] };
+  }
+  if (hasPerPayment) {
+    try {
+      perPaymentMinor = toMinor(String(perPayment), 'perPayment');
+    } catch (error) {
+      return { ok: false, guards: [guard('amount_precision_invalid', error.message)] };
+    }
+    if (perPaymentMinor <= 0) {
+      return { ok: false, guards: [guard('per_payment_invalid', 'perPayment musi byt kladne cislo')] };
+    }
+  }
+
+  if (monthsNum === undefined) {
+    monthsNum = perPaymentMinor >= totalMinor ? 1 : Math.ceil(totalMinor / perPaymentMinor);
+  }
+  if (perPaymentMinor === undefined) {
+    perPaymentMinor = Math.ceil(totalMinor / monthsNum);
+  }
+  perPaymentNum = currency(perPaymentMinor);
+
   const rows = [];
-  let remaining = totalNum;
+  let remaining = totalMinor;
   for (let i = 0; i < monthsNum; i += 1) {
     const isLast = i === monthsNum - 1;
-    const amount = isLast ? remaining : perPaymentNum;
+    const amountMinor = isLast ? remaining : Math.min(remaining, perPaymentMinor);
     const { year: ry, monthIndex0: rm, day: rd } = addMonths(year, monthIndex0, day, i);
-    rows.push({ n: i + 1, date: toIso(ry, rm, rd), amount: Math.round(amount) });
-    remaining -= amount;
+    rows.push({ n: i + 1, date: toIso(ry, rm, rd), amount: currency(amountMinor) });
+    remaining -= amountMinor;
   }
 
   const last = rows[rows.length - 1];
@@ -107,7 +146,7 @@ function computeSchedule({ startDate, total, perPayment, months } = {}) {
     months: monthsNum,
     perPayment: perPaymentNum,
     lastAmount: last.amount,
-    total: totalNum,
+    total: currency(totalMinor),
     startDate: toIso(year, monthIndex0, day),
     endDate: last.date,
     fmtStart: toCzech(year, monthIndex0, day),
