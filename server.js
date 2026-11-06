@@ -15,6 +15,7 @@ const access = require('./access');
 const writeoff = require('./writeoff-bridge');
 const pipeline = require('./pipeline/src/orchestrator');
 const mockCrm = require('./mock-crm');
+const { toMinorOrZero, fromMinor } = require('./writeoff/src/money');
 
 const JWT_SECRET = (process.env.JWT_SECRET || '').trim();
 if (JWT_SECRET.length < 32 || /replace_with|demo-secret|change/i.test(JWT_SECRET)) {
@@ -292,24 +293,24 @@ function mergeData(loansRaw, paymentsRaw, customerId) {
 
     // platba = sum of ALL financial fields in this row
     payMap[cid].platba += ALL_FINANCIAL_INDICES.reduce(
-      (s, f) => s + Number(row[f] || 0), 0
+      (s, f) => s + toMinorOrZero(row[f], f), 0
     );
 
     // Individual breakdown fields — SUM across rows
-    payMap[cid].uhrJist += Number(row[F_PAY.jistina] || 0);
-    payMap[cid].prodlouzeni += Number(row[F_PAY.prodlouzeni] || 0);
-    payMap[cid].naklady += Number(row[F_PAY.naklady] || 0);
-    payMap[cid].pokuta += Number(row[F_PAY.pokuta] || 0);
-    payMap[cid].kompUrk += Number(row[F_PAY.kompUrk] || 0);
-    payMap[cid].upominky += Number(row[F_PAY.upominky1] || 0)
-      + Number(row[F_PAY.upominky2] || 0)
-      + Number(row[F_PAY.upominky3] || 0)
-      + Number(row[F_PAY.upominky4] || 0);
-    payMap[cid].inkasni += Number(row[F_PAY.inkasni] || 0);
-    payMap[cid].vymahani += Number(row[F_PAY.vymahani] || 0);
+    payMap[cid].uhrJist += toMinorOrZero(row[F_PAY.jistina], F_PAY.jistina);
+    payMap[cid].prodlouzeni += toMinorOrZero(row[F_PAY.prodlouzeni], F_PAY.prodlouzeni);
+    payMap[cid].naklady += toMinorOrZero(row[F_PAY.naklady], F_PAY.naklady);
+    payMap[cid].pokuta += toMinorOrZero(row[F_PAY.pokuta], F_PAY.pokuta);
+    payMap[cid].kompUrk += toMinorOrZero(row[F_PAY.kompUrk], F_PAY.kompUrk);
+    payMap[cid].upominky += toMinorOrZero(row[F_PAY.upominky1], F_PAY.upominky1)
+      + toMinorOrZero(row[F_PAY.upominky2], F_PAY.upominky2)
+      + toMinorOrZero(row[F_PAY.upominky3], F_PAY.upominky3)
+      + toMinorOrZero(row[F_PAY.upominky4], F_PAY.upominky4);
+    payMap[cid].inkasni += toMinorOrZero(row[F_PAY.inkasni], F_PAY.inkasni);
+    payMap[cid].vymahani += toMinorOrZero(row[F_PAY.vymahani], F_PAY.vymahani);
 
     // writeoff is a credit-level field — OVERWRITE
-    payMap[cid].writeoff = Number(row[F_PAY.writeoff] || 0);
+    payMap[cid].writeoff = toMinorOrZero(row[F_PAY.writeoff], F_PAY.writeoff);
   }
 
   // ── Map loan rows ──────────────────────────────────────────────────────────
@@ -334,7 +335,8 @@ function mergeData(loansRaw, paymentsRaw, customerId) {
     // payment_amount_2 is the FULL transaction size and gets recorded against
     // multiple credits simultaneously — summing it per credit double-counts.
     // The _pokryto fields (allocSum) are the correct per-credit paid amount.
-    const platba = paid.platba || 0;
+    const platbaMinor = paid.platba || 0;
+    const money = minor => Number(fromMinor(minor));
 
     return {
       id: cid,
@@ -346,30 +348,36 @@ function mergeData(loansRaw, paymentsRaw, customerId) {
       schval: String(l[F_LOAN.created] ?? '—'),
       splatn: String(l[F_LOAN.expire] ?? '—'),
       vprodl: Number(l[F_LOAN.delay] || 0),
-      jistina: Number(l[F_LOAN.amount] || 0),
-      platba,
-      uhrJist: paid.uhrJist || 0,
-      writeoff: paid.writeoff || 0,
+      jistina: money(toMinorOrZero(l[F_LOAN.amount], F_LOAN.amount)),
+      platba: money(platbaMinor),
+      uhrJist: money(paid.uhrJist || 0),
+      writeoff: money(paid.writeoff || 0),
       // ── Pair columns (issued / paid) ──
-      castProd: Number(l[F_LOAN.tax7] || 0),
-      castProdU: paid.prodlouzeni || 0,
-      naklPujc: Number(l[F_LOAN.charge] || 0),
-      naklPujcU: paid.naklady || 0,
-      smlPok: Number(l[F_LOAN.lateFee] || 0),
-      smlPokU: paid.pokuta || 0,
-      kompUrk: Number(l[F_LOAN.cinterest] || 0),
-      kompUrkU: paid.kompUrk || 0,
-      upomink: Number(l[F_LOAN.upominky] || 0),
-      upominkU: paid.upominky || 0,
-      inkasni: Number(l[F_LOAN.tax6] || 0),
-      inkasniU: paid.inkasni || 0,
-      vymah: Number(l[F_LOAN.tax8] || 0),
-      vymahU: paid.vymahani || 0,
-      dluh: Number(l[F_LOAN.debt] || 0),
+      castProd: money(toMinorOrZero(l[F_LOAN.tax7], F_LOAN.tax7)),
+      castProdU: money(paid.prodlouzeni || 0),
+      naklPujc: money(toMinorOrZero(l[F_LOAN.charge], F_LOAN.charge)),
+      naklPujcU: money(paid.naklady || 0),
+      smlPok: money(toMinorOrZero(l[F_LOAN.lateFee], F_LOAN.lateFee)),
+      smlPokU: money(paid.pokuta || 0),
+      kompUrk: money(toMinorOrZero(l[F_LOAN.cinterest], F_LOAN.cinterest)),
+      kompUrkU: money(paid.kompUrk || 0),
+      upomink: money(toMinorOrZero(l[F_LOAN.upominky], F_LOAN.upominky)),
+      upominkU: money(paid.upominky || 0),
+      inkasni: money(toMinorOrZero(l[F_LOAN.tax6], F_LOAN.tax6)),
+      inkasniU: money(paid.inkasni || 0),
+      vymah: money(toMinorOrZero(l[F_LOAN.tax8], F_LOAN.tax8)),
+      vymahU: money(paid.vymahani || 0),
+      dluh: money(toMinorOrZero(l[F_LOAN.debt], F_LOAN.debt)),
     };
   });
 
-  const totalJistina = loans.filter(l => !l.origin).reduce((s, l) => s + l.jistina, 0);
+  const totalJistinaMinor = loanRows.filter(l => {
+    const origin = l[F_LOAN.origin];
+    return origin === null || origin === undefined || String(origin).trim() === '' || String(origin).trim() === '0';
+  }).reduce(
+    (s, l) => s + toMinorOrZero(l[F_LOAN.amount], F_LOAN.amount), 0
+  );
+  const totalJistina = Number(fromMinor(totalJistinaMinor));
   const hasWriteoff = loans.some(l => l.writeoff > 0);
 
   // Mark original loans whose chain still has outstanding debt.

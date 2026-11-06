@@ -199,7 +199,6 @@ CI runs lint, the BOM check and the tests on Node 18, 20 and 22.
 
 Stated up front, because they are the first things a reviewer would find.
 
-- **The loan overview sums money as floats.** `mergeData()` in `server.js` aggregates about twenty numeric fields per row with `Number`. It is a read-only report and tolerates it; every *write* goes through the integer core. Moving it to integer arithmetic is the obvious next step.
 - **`pipeline/` is experimental.** The 10-step settlement flow, including the headless-browser step that fills a legacy form, contains parameters and selectors that are marked as unverified guesses in the code. Its state is in memory, so a crash between steps loses the operator's context. Pipeline snapshots in `audit/pipeline.jsonl` show the last saved step after a restart; they do not support resuming the operation. Treat it as a prototype.
 - **Audit index lives in memory.** The idempotency lookup is O(1) after the first read of the JSONL log, which assumes a single writer process; a multi-instance deployment would need a shared store such as SQLite.
 - **Styles are still inline.** Scripts are served from `/app.js` with delegated handlers, so `script-src` has no `'unsafe-inline'`; `style-src` keeps it until the page's inline styles are moved out.

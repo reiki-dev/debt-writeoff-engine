@@ -6,6 +6,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const bcrypt = require('bcryptjs');
+const axios = require('axios');
+const jwt = require('jsonwebtoken');
 const supertest = require('supertest');
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'writeoff-routes-'));
@@ -119,6 +121,35 @@ test('debug is hidden in mock mode; XSS is returned as JSON text for UI escaping
   assert.match(users.headers['content-type'], /application\/json/);
   assert.ok(users.body.users.some(user => user.username === '<img src=x onerror=1>'));
   assert.match(fs.readFileSync(path.join(__dirname, '..', 'public', 'esc.js'), 'utf8'), /&lt;/);
+});
+
+test('overview aggregates decimal payment rows exactly and keeps numeric Kč fields', async () => {
+  const admin = byRole('admin');
+  const token = jwt.sign({ id: admin.id, username: admin.username, role: 'admin' }, process.env.JWT_SECRET);
+  const originalMode = process.env.MOCK_MODE;
+  const originalGet = axios.get;
+  const loan = {
+    id_0: '500', typ_produktu: 'Test', credit_status: 'Active', customer_id_3: '1001',
+    amount_7: '1.00', debt_16: '0.30',
+  };
+  const payment = { credit_id_1: '500', amount_4: '0.10' };
+  process.env.MOCK_MODE = 'false';
+  axios.get = async (_url, { params }) => ({
+    data: { data: params.id === 101 ? [loan] : [payment, payment, payment] },
+  });
+
+  try {
+    const response = await request.get('/api/client/1001').set(auth(token));
+    assert.equal(response.status, 200);
+    assert.equal(response.body.loans[0].platba, 0.3);
+    assert.equal(response.body.loans[0].uhrJist, 0.3);
+    assert.equal(typeof response.body.loans[0].platba, 'number');
+    assert.equal(response.body.totalJistina, 1);
+  } finally {
+    axios.get = originalGet;
+    if (originalMode === undefined) delete process.env.MOCK_MODE;
+    else process.env.MOCK_MODE = originalMode;
+  }
 });
 
 test.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
