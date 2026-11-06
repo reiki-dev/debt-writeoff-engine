@@ -26,7 +26,7 @@ const path = require('node:path');
 // понадобиться и служебному скрипту — а без .env он бы вывел настройки
 // из пустого окружения и молча пошёл на дефолтный домен без ключа.
 // Повторный вызов безопасен: dotenv не перезаписывает уже заданные переменные.
-require('dotenv').config();
+// server.js loads dotenv only when it is launched as the application entry point.
 
 function originOf(url) {
   try {
@@ -78,59 +78,53 @@ const mockCrm = require('./mock-crm');
 
 if (mockCrm.isMockMode()) {
   console.log('[writeoff] Mock mode enabled: using synthetic fixtures for debt write-off.');
+  const { ORDER, SOURCE_COLUMN, PAYLOAD_FIELD } = writeoff.buckets;
+  const { toMinor, fromMinor } = writeoff.money;
+  const balances = new Map();
 
-  const exportReader = require('./writeoff/src/exportReader');
-  const mockFetch = async function (opts = {}) {
-    const rows = mockCrm.getMockCreditRows(opts);
-    return { rows, raw: { mock: true } };
-  };
-
-  exportReader.fetchCreditRows = mockFetch;
-  writeoff.fetchCreditRows = mockFetch;
-
-  writeoff.applyPlan = async function (plan, opts = {}) {
-    const key = plan.idempotencyKey;
-    const writeoffId = 'MOCK-' + Math.floor(100000 + Math.random() * 900000);
-    const ts = new Date().toISOString();
-
-    if (writeoff.audit && typeof writeoff.audit.append === 'function') {
-      try {
-        await writeoff.audit.append({
-          ts,
-          event: 'intent',
-          idempotencyKey: key,
-          actor: opts.actor || 'demo',
-          customerId: plan.customerId,
-          creditId: plan.creditId,
-          target: plan.target,
-          debtBefore: plan.debtBefore,
-          amount: plan.amount,
-          allocation: plan.allocation,
-          payload: writeoff.buildPayload(plan, opts.notes),
-        });
-
-        await writeoff.audit.append({
-          ts: new Date().toISOString(),
-          event: 'applied',
-          idempotencyKey: key,
-          actor: opts.actor || 'demo',
-          customerId: plan.customerId,
-          creditId: plan.creditId,
-          writeoffId,
-        });
-      } catch (err) {
-        console.warn('[mock-writeoff] could not write audit log:', err.message);
+  async function mockFetch(url, init = {}) {
+    const pathname = new URL(url).pathname;
+    if (pathname.endsWith('/special/writeoff')) {
+      const payload = init.body ? JSON.parse(init.body) : Object.fromEntries(new URL(url).searchParams);
+      const id = `${payload.customerId}:${payload.creditId}`;
+      const rows = mockCrm.getMockCreditRows({ customerId: payload.customerId, creditId: payload.creditId });
+      const base = balances.get(id) || rows[0];
+      const updated = { ...base };
+      for (const bucket of ORDER) {
+        const field = PAYLOAD_FIELD[bucket];
+        if (payload[field] === undefined) continue;
+        const column = SOURCE_COLUMN[bucket];
+        updated[column] = fromMinor(toMinor(updated[column] || 0) - toMinor(payload[field]));
       }
+      const newDebt = toMinor(updated.debt) - ORDER.reduce((sum, bucket) => {
+        const field = PAYLOAD_FIELD[bucket];
+        return sum + (payload[field] === undefined ? 0 : toMinor(payload[field]));
+      }, 0);
+      updated.debt = fromMinor(newDebt);
+      balances.set(id, updated);
+      return new Response(JSON.stringify({ status: 200, data: { status: 'success', writeoffId: `MOCK-${Date.now()}` } }));
     }
+    const params = new URL(url).searchParams;
+    const filters = JSON.parse(params.get('filter') || '[]');
+    const customerId = filters.find((f) => f.name === 'customers.customer_id')?.value || '1001';
+    const creditId = filters.find((f) => f.name === 'credits.id')?.value;
+    const rows = mockCrm.getMockCreditRows({ customerId, creditId }).map((row) => {
+      return balances.has(`${customerId}:${row.id}`) ? { ...balances.get(`${customerId}:${row.id}`) } : row;
+    });
+    return new Response(JSON.stringify({ status: 200, data: { names: {}, data: rows } }));
+  }
 
-    return {
-      status: 'applied',
-      writeoffId,
-      appliedAt: ts,
-      plan,
-    };
+  module.exports = {
+    ...writeoff,
+    fetchCreditRows: async ({ customerId, creditId }) => ({
+      rows: mockCrm.getMockCreditRows({ customerId, creditId }).map((row) => {
+        return balances.has(`${customerId}:${row.id}`) ? { ...balances.get(`${customerId}:${row.id}`) } : row;
+      }),
+    }),
+    buildPlan: (options) => writeoff.buildPlan({ ...options, fetchImpl: mockFetch }),
+    applyPlan: (plan, options) => writeoff.applyPlan(plan, { ...options, fetchImpl: mockFetch }),
   };
+} else {
+  module.exports = writeoff;
 }
-
-module.exports = writeoff;
 

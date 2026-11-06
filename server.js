@@ -1,4 +1,4 @@
-require('dotenv').config();
+if (require.main === module && process.env.NODE_ENV !== 'test') require('dotenv').config();
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
@@ -40,7 +40,7 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const USERS_FILE = path.join(__dirname, 'users.json');
+const USERS_FILE = process.env.USERS_FILE || path.join(__dirname, 'users.json');
 const API_BASE = process.env.API_BASE_URL
   || 'https://api.example.test/api/v1.0/export/export';
 const JWT_EXPIRES = process.env.JWT_EXPIRES || '8h';
@@ -836,9 +836,11 @@ app.get('/debug/:customerId', (req, res, next) => {
   }
 });
 
-app.listen(PORT, () => {
+if (require.main === module) app.listen(PORT, () => {
   console.log(`✅  Debt Portfolio Platform → http://localhost:${PORT}`);
   if (mockCrm.isMockMode()) {
     console.log('ℹ️   Running in MOCK MODE (Offline). Demo clients: 1001, 1002');
   }
 });
+
+module.exports = { app };
