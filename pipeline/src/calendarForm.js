@@ -221,7 +221,7 @@ async function fillCalendarForm(operationId, { customerId, creditId, startDate, 
       err.debugScreenshot = await page.screenshot({ fullPage: true });
       err.debugUrl = page.url();
       err.message = `${err.message} [aktualni URL: ${err.debugUrl}]`;
-    } catch (screenshotErr) {
+    } catch {
       // stranka uz nemusi byt pouzitelna (zavreny kontext apod.) — puvodni
       // chybu tim nezastirame, jen nepridame screenshot.
     }

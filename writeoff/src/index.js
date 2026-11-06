@@ -5,7 +5,7 @@
 const { config, assertUsable } = require('./config');
 const buckets = require('./buckets');
 const money = require('./money');
-const { call, ApiError } = require('./client');
+const { ApiError } = require('./client');
 const {
   fetchExport, fetchCreditRows, normalize, pick, hasColumn, ExportError,
 } = require('./exportReader');

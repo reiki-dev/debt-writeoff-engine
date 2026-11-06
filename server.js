@@ -368,11 +368,11 @@ function mergeData(loansRaw, paymentsRaw, customerId) {
   // naklPujc (charge_10) is the contracted fee — it belongs to the total only
   // once the chain is closed (fee has been applied / loan repaid).
   const originOf = Object.fromEntries(loans.filter(l => l.origin).map(l => [l.id, l.origin]));
-function findRoot(id) { while (originOf[id]) id = originOf[id]; return id; }
-const openRootIds = new Set(loans.filter(l => l.dluh > 0).map(l => findRoot(l.id)));
-// hasChildren: originals that actually have extensions (real chain parents)
-const hasChildren = new Set(loans.filter(l => l.origin).map(l => l.origin));
-for (const l of loans) l.chainOpen = openRootIds.has(l.id) && hasChildren.has(l.id);
+  function findRoot(id) { while (originOf[id]) id = originOf[id]; return id; }
+  const openRootIds = new Set(loans.filter(l => l.dluh > 0).map(l => findRoot(l.id)));
+  // hasChildren: originals that actually have extensions (real chain parents)
+  const hasChildren = new Set(loans.filter(l => l.origin).map(l => l.origin));
+  for (const l of loans) l.chainOpen = openRootIds.has(l.id) && hasChildren.has(l.id);
 
   return {
     customerId,

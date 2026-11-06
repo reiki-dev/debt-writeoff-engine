@@ -7,10 +7,6 @@
  * interview presentations, and testing without requiring live CRM credentials.
  */
 
-const fs = require('fs');
-const path = require('node:path');
-const crypto = require('node:crypto');
-
 function isMockMode() {
   return /^(1|true|yes)$/i.test((process.env.MOCK_MODE || '').trim());
 }
