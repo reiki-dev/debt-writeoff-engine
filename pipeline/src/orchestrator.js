@@ -14,6 +14,7 @@
 // ----------------------------------------------------------------------------
 
 const crypto = require('node:crypto');
+const path = require('node:path');
 const writeoff = require('../../writeoff-bridge');
 const { pick, hasColumn } = require('../../writeoff/src/exportReader');
 const crmApi = require('./crmApi');
@@ -22,8 +23,11 @@ const calendarForm = require('./calendarForm');
 const { computeSchedule } = require('./schedule');
 const { buildScheduleNote, writeoffNote } = require('./notes');
 const { config } = require('./config');
+const { appendSnapshot, readLatestSnapshots, statusFromSnapshot } = require('./snapshots');
 
 const operations = new Map();
+const snapshotsFile = path.join(config.AUDIT_DIR, 'pipeline.jsonl');
+const recoveredSnapshots = readLatestSnapshots(snapshotsFile);
 
 // --- step definitions --------------------------------------------------------
 //
@@ -162,6 +166,18 @@ function markSkippedSteps(op) {
   }
 }
 
+async function persistSnapshot(op) {
+  const state = serialize(op);
+  // Do not persist the screenshot itself or the raw balance export.
+  delete state.hasCalendarScreenshot;
+  try {
+    await appendSnapshot(snapshotsFile, state);
+  } catch (err) {
+    // A failed trace must never abort an operation that may already have written off money.
+    console.error(`pipeline snapshot not saved: ${err.message}`);
+  }
+}
+
 // --- build and run operation -------------------------------------------------
 
 function buildOperation({
@@ -214,10 +230,12 @@ async function advance(op) {
       op.waitingFor = def.name;
       op.prompt = def.prompt;
       op.steps[def.name] = { ...op.steps[def.name], status: 'active' };
+      await persistSnapshot(op);
       return;
     }
 
     op.steps[def.name] = { ...op.steps[def.name], status: 'active' };
+    await persistSnapshot(op);
     try {
       const result = await def.run(op);
       op.steps[def.name] = { status: 'done', result };
@@ -230,17 +248,21 @@ async function advance(op) {
       // Playwright reached. Save it so the operator can view it using the same
       // /calendar-preview.png endpoint as a successful preview.
       if (err.debugScreenshot) op.calendarScreenshot = err.debugScreenshot;
+      await persistSnapshot(op);
       return;
     }
+    await persistSnapshot(op);
     op.cursor += 1;
   }
   op.status = 'complete';
   op.waitingFor = null;
   op.prompt = null;
+  await persistSnapshot(op);
 }
 
 async function start(input) {
   const op = buildOperation(input);
+  await persistSnapshot(op);
   await advance(op);
   return serialize(op);
 }
@@ -258,13 +280,18 @@ async function confirmStep(operationId, stepName) {
     throw err;
   }
   op.steps[stepName] = { ...op.steps[stepName], confirmed: true };
+  await persistSnapshot(op);
   await advance(op);
   return serialize(op);
 }
 
 function getStatus(operationId) {
   const op = operations.get(operationId);
-  return op ? serialize(op) : null;
+  if (op) return serialize(op);
+
+  const snapshot = recoveredSnapshots.get(operationId);
+  if (!snapshot) return null;
+  return statusFromSnapshot(snapshot);
 }
 
 function getCalendarScreenshot(operationId) {

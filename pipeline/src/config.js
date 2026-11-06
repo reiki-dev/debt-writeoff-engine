@@ -25,6 +25,7 @@ const config = {
   API_KEY: writeoffConfig.API_KEY,
   AUTH_MODE: writeoffConfig.AUTH_MODE,
   HTTP_TIMEOUT_MS: writeoffConfig.HTTP_TIMEOUT_MS,
+  AUDIT_DIR: writeoffConfig.AUDIT_DIR,
 
   // Login for the CRM web admin; the API key is not used here. The calendar
   // form requires a regular browser session. Step 7 (Playwright).
