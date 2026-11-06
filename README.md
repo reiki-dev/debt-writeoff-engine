@@ -200,7 +200,7 @@ CI runs lint, the BOM check and the tests on Node 18, 20 and 22.
 Stated up front, because they are the first things a reviewer would find.
 
 - **The loan overview sums money as floats.** `mergeData()` in `server.js` aggregates about twenty numeric fields per row with `Number`. It is a read-only report and tolerates it; every *write* goes through the integer core. Moving it to integer arithmetic is the obvious next step.
-- **`pipeline/` is experimental.** The 10-step settlement flow, including the headless-browser step that fills a legacy form, contains parameters and selectors that are marked as unverified guesses in the code. Its state is in memory, so a crash between steps loses the operator's context. Treat it as a prototype.
+- **`pipeline/` is experimental.** The 10-step settlement flow, including the headless-browser step that fills a legacy form, contains parameters and selectors that are marked as unverified guesses in the code. Its state is in memory, so a crash between steps loses the operator's context (the write-off step itself is audited independently, so a crash in later steps never loses the money trail). Treat it as a prototype.
 - **Audit reads are O(n).** With the idempotency guard on, each apply reads the whole JSONL log. That is fine at a few operations per day; at scale it needs an index or SQLite.
 - **The CSP allows inline scripts.** The single-page UI uses inline scripts and handlers, so the policy has `'unsafe-inline'`. A nonce-based policy needs the UI split into files.
 - **One process, JSON user store, JSONL audit.** Right-sized for a handful of operators; not a multi-instance design.
