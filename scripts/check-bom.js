@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-const supported = /\.(?:js|md|example)$/i;
+const supported = /\.(?:js|mjs|cjs|json|html|css|md|yml|yaml|example)$/i;
 let files;
 if (process.argv.length > 2) {
   files = process.argv.slice(2);
