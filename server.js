@@ -13,7 +13,6 @@ const LOGIN_DUMMY_HASH = '$2a$12$waUZWvaTSPZvki8lZUhkleUJIhmjyAg02bwkrx84G3e1N9S
 
 const access = require('./access');
 const writeoff = require('./writeoff-bridge');
-const pipeline = require('./pipeline/src/orchestrator');
 const mockCrm = require('./mock-crm');
 const { toMinorOrZero, fromMinor } = require('./writeoff/src/money');
 
@@ -729,97 +728,7 @@ app.post('/api/writeoff/apply', requireAuth, requireCap(access.CAPS.WRITEOFF),
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// "Splátkový kalendář" (payment schedule) pipeline, steps 1-10.
 //
-// Autosearch pujcek s dluhem pouziva stejnou routu jako zalozka Odpis dluhu
-// (GET /api/writeoff/credits/:customerId) — kdo ma cap PIPELINE, ma podle
-// access.js vzdy i cap WRITEOFF, takze samostatna kopie routy by jen
-// duplikovala kod bez duvodu.
-//
-// Stav operace zije v pameti procesu (pipeline/src/orchestrator.js) — pri
-// restartu serveru operace mizi, viz komentar tamtez.
-// ══════════════════════════════════════════════════════════════════════════════
-
-const pipelineLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 20,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Příliš mnoho požadavků. Zkuste to za minutu.' },
-});
-
-function sendPipelineError(res, err) {
-  const code = err && err.code;
-  if (code === 'schedule_invalid' || code === 'reason_invalid') {
-    return res.status(400).json({ error: err.message, code });
-  }
-  if (code === 'sheet_row_not_found' || code === 'writeoff_blocked'
-    || code === 'operation_not_found' || code === 'step_not_waiting') {
-    return res.status(409).json({ error: err.message, code, findings: err.findings || null });
-  }
-  console.error('[pipeline]', err);
-  res.status(500).json({ error: err && err.message ? err.message : 'Neočekávaná chyba v pipeline' });
-}
-
-// POST /api/pipeline/start
-app.post('/api/pipeline/start', requireAuth, requireCap(access.CAPS.PIPELINE), pipelineLimiter,
-  async (req, res) => {
-    const {
-      customerId, creditId, type, blacklistReasonId,
-      targetTotal, calStartDate, calPerPayment, calTotal, skippedSteps,
-    } = req.body || {};
-
-    if (!isId(customerId) || !isId(creditId)) {
-      return res.status(400).json({ error: 'Neplatné ID' });
-    }
-    if (type !== 'DON' && type !== 'EPR') {
-      return res.status(400).json({ error: 'type musí být DON nebo EPR' });
-    }
-
-    try {
-      const result = await pipeline.start({
-        customerId, creditId, type,
-        blacklistReasonId, targetTotal, calStartDate, calPerPayment, calTotal,
-        skippedSteps: Array.isArray(skippedSteps) ? skippedSteps : [],
-        actor: req.user.username,
-      });
-      res.json(result);
-    } catch (err) {
-      sendPipelineError(res, err);
-    }
-  });
-
-// POST /api/pipeline/:operationId/confirm { step }
-app.post('/api/pipeline/:operationId/confirm', requireAuth, requireCap(access.CAPS.PIPELINE), pipelineLimiter,
-  async (req, res) => {
-    const { step } = req.body || {};
-    if (!step) return res.status(400).json({ error: 'Chybí step' });
-    try {
-      const result = await pipeline.confirmStep(req.params.operationId, step);
-      res.json(result);
-    } catch (err) {
-      sendPipelineError(res, err);
-    }
-  });
-
-// GET /api/pipeline/:operationId/status — obnoveni stavu po reloadu stranky.
-app.get('/api/pipeline/:operationId/status', requireAuth, requireCap(access.CAPS.PIPELINE),
-  (req, res) => {
-    const result = pipeline.getStatus(req.params.operationId);
-    if (!result) return res.status(404).json({ error: 'Operace nenalezena' });
-    res.json(result);
-  });
-
-// GET /api/pipeline/:operationId/calendar-preview.png — screenshot vyplneneho
-// formulare pro rucni potvrzeni kroku calendar_confirm.
-app.get('/api/pipeline/:operationId/calendar-preview.png', requireAuth, requireCap(access.CAPS.PIPELINE),
-  (req, res) => {
-    const screenshot = pipeline.getCalendarScreenshot(req.params.operationId);
-    if (!screenshot) return res.status(404).end();
-    res.type('png').send(screenshot);
-  });
-
-// ── Start ─────────────────────────────────────────────────────────────────────
 // Debug endpoint — returns raw CRM response for a customer.
 // Returns the raw CRM response and field map, so only admins can access it;
 // ordinary operators do not need internal column names.

@@ -704,7 +704,6 @@ let activeTab = null;
 const TABS = [
   { id: 'prehled',  cap: 'prehled',  label: 'Přehled půjček' },
   { id: 'odpis',    cap: 'writeoff', label: 'Odpis dluhu', wo: true },
-  { id: 'kalendar', cap: 'pipeline', label: 'Splátkový kalendář' },
   { id: 'uziv',     cap: 'users',    label: 'Uživatelé' },
 ];
 
@@ -736,7 +735,6 @@ function showTab(id) {
   document.getElementById('search-wrap').style.display = id === 'prehled' ? '' : 'none';
 
   if (id === 'uziv') uLoad();
-  if (id === 'kalendar') kInit();
 }
 
 function applyCaps() {
@@ -1008,7 +1006,7 @@ document.addEventListener('keydown', function (e) {
 // ── Uživatelé ─────────────────────────────────────────────────────────────
 const ROLE_LABEL = {
   admin: 'vše + správa uživatelů',
-  cc: 'odpis a kalendář',
+  cc: 'odpis',
   mail: 'pouze čtení',
 };
 
@@ -1031,7 +1029,7 @@ async function uLoad() {
     document.getElementById('u-table').innerHTML = `<table>
       <thead><tr>
         <th>Uživatel</th><th>Role</th><th>Oprávnění</th>
-        <th>Přehled</th><th>Odpis</th><th>Kalendář</th><th>Správa</th><th>Vytvořen</th>
+        <th>Přehled</th><th>Odpis</th><th>Správa</th><th>Vytvořen</th>
       </tr></thead>
       <tbody>${r.data.users.map(u => `<tr>
         <td><strong>${esc(u.username)}</strong>${u.username === r.data.me ? ' <span style="color:var(--gray);font-size:10px">(vy)</span>' : ''}</td>
@@ -1044,7 +1042,6 @@ async function uLoad() {
         <td style="color:var(--text-s);font-size:11px">${esc(ROLE_LABEL[u.role] || '')}</td>
         <td>${u.caps.indexOf('prehled') !== -1 ? '✓' : '<span style="color:#B6BCC6">—</span>'}</td>
         <td>${u.caps.indexOf('writeoff') !== -1 ? '✓' : '<span style="color:#B6BCC6">—</span>'}</td>
-        <td>${u.caps.indexOf('pipeline') !== -1 ? '✓' : '<span style="color:#B6BCC6">—</span>'}</td>
         <td>${u.caps.indexOf('users') !== -1 ? '✓' : '<span style="color:#B6BCC6">—</span>'}</td>
         <td class="mono" style="font-size:10.5px;color:var(--gray)">${esc(u.createdAt ? String(u.createdAt).slice(0, 10) : '—')}</td>
       </tr>`).join('')}</tbody></table>`;
@@ -1099,294 +1096,6 @@ async function boot() {
 
 boot();
 
-// ══════════════════════════════════════════════════════════════════════════════
-// Splátkový kalendář — pipeline
-//
-// Autosearch pujcek pouziva /api/writeoff/credits — stejnou rutu jako zalozka
-// Odpis dluhu (viz komentar v server.js): kdo ma cap pipeline, ma podle
-// access.js vzdy i cap writeoff.
-//
-// Vyber typu dohody (DoN/EPR) a kategorie blacklistu se deje predem, spolu s
-// ID klienta/pujcky — pipeline pak bezi az na konec a zastavuje se jen na
-// dvou rucnich krocich (pauza upominek, potvrzeni screenshotu kalendare).
-// Vypocet grafiku a text poznamky si pocita server znovu (viz pipeline/src/
-// schedule.js, notes.js) — nahled v prohlizeci je jen orientacni.
-// ══════════════════════════════════════════════════════════════════════════════
-
-const K_REASONS = [
-  { id: 3,  label: 'Client' },
-  { id: 4,  label: 'Attorney' },
-  { id: 5,  label: 'Financial Arbitrator' },
-  { id: 6,  label: 'Attorney and Financial Arbitrator' },
-  { id: 16, label: 'EPR' },
-];
-
-const K_TOGGLEABLE = {
-  sheets_write:     { label: 'Zápis do Google Sheets',        tag: 'Sheets' },
-  category:         { label: 'Kategorie klienta',             tag: 'API' },
-  credit_category:  { label: 'Kategorie půjčky',              tag: 'API' },
-  pause_reminders:  { label: 'Pauza upomínek',                tag: 'ručně' },
-  writeoff:         { label: 'Odpis dluhu',                   tag: 'peníze' },
-  calendar:         { label: 'Splátkový kalendář (Playwright)', tag: 'Playwright' },
-  blacklist:        { label: 'Blacklist',                     tag: 'API' },
-  notes_final:      { label: 'Finální poznámky',              tag: 'API' },
-};
-
-const K_STEPS = [
-  { name: 'read_balance',     label: 'Čtení zůstatků' },
-  { name: 'sheets_write',     label: 'Zápis do Google Sheets' },
-  { name: 'category',         label: 'Kategorie klienta' },
-  { name: 'credit_category',  label: 'Kategorie půjčky' },
-  { name: 'pause_reminders',  label: 'Pauza upomínek' },
-  { name: 'writeoff',         label: 'Odpis dluhu' },
-  { name: 'calendar_launch',  label: 'Formulář kalendáře' },
-  { name: 'calendar_confirm', label: 'Potvrzení kalendáře' },
-  { name: 'blacklist',        label: 'Blacklist' },
-  { name: 'notes_final',      label: 'Finální poznámky' },
-];
-
-let kType = 'DON';
-let kReasonId = null;
-let kToggleState = {};
-let kOpId = null;
-let kCurrentStep = null;
-
-function kInit() {
-  kRenderReasons();
-  kSetType('DON');
-}
-
-function kSetType(type) {
-  kType = type;
-  document.getElementById('k-type-don').classList.toggle('act', type === 'DON');
-  document.getElementById('k-type-epr').classList.toggle('act', type === 'EPR');
-  kUpdateNote();
-}
-
-function kRenderReasons() {
-  document.getElementById('k-reasons').innerHTML = K_REASONS.map(r =>
-    `<button class="kreason${r.id === kReasonId ? ' sel' : ''}" data-action="k-pick-reason" data-id="${r.id}">
-       <b>ID ${r.id}</b>${r.label}
-     </button>`).join('');
-}
-function kPickReason(id) { kReasonId = id; kRenderReasons(); }
-
-function kCalcSchedule() {
-  const start = document.getElementById('k-start').value.trim();
-  const per   = parseFloat(document.getElementById('k-per').value.trim().replace(',', '.'));
-  const total = parseFloat(document.getElementById('k-total').value.trim().replace(',', '.'));
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !(per > 0) || !(total > 0)) return null;
-  const [y, m, d] = start.split('-').map(Number);
-  const months = (per >= total) ? 1 : Math.ceil(total / per);
-  const pp = n => String(n).padStart(2, '0');
-  const lastMonthIdx = m - 1 + (months - 1);
-  const lastYear  = y + Math.floor(lastMonthIdx / 12);
-  const lastMonth = ((lastMonthIdx % 12) + 12) % 12;
-  const daysInLast = new Date(Date.UTC(lastYear, lastMonth + 1, 0)).getUTCDate();
-  const lastDay = Math.min(d, daysInLast);
-  const fmtEnd   = `${pp(lastDay)}.${pp(lastMonth + 1)}.${lastYear}`;
-  const fmtStart = `${pp(d)}.${pp(m)}.${y}`;
-  return { months, per, total, fmtStart, fmtEnd };
-}
-
-function kUpdateNote() {
-  const s = kCalcSchedule();
-  const el = document.getElementById('k-note-preview');
-  if (!s) { el.textContent = 'Vyplňte datum, splátku a částku…'; return; }
-  const now = new Date();
-  const pp = n => String(n).padStart(2, '0');
-  const stamp = `${now.getFullYear()}-${pp(now.getMonth()+1)}-${pp(now.getDate())} ${pp(now.getHours())}:${pp(now.getMinutes())}`;
-  const label = kType === 'DON' ? 'mám DoN' : 'EPR';
-  el.textContent = `${stamp} - ${label}, Klient platí ${s.total} po ${s.per} od ${s.fmtStart} do ${s.fmtEnd}`;
-}
-
-function kFormMsg(text, kind) {
-  const el = document.getElementById('k-form-msg');
-  if (!text) { el.style.display = 'none'; return; }
-  el.style.display = ''; el.textContent = text;
-  el.style.background = kind === 'err' ? 'var(--red-l)' : 'var(--green-l)';
-  el.style.color = kind === 'err' ? 'var(--red)' : 'var(--green)';
-  el.style.borderColor = kind === 'err' ? '#F09595' : '#97C459';
-}
-
-async function kLoadCredits() {
-  const cust = document.getElementById('k-cust').value.trim();
-  if (!/^\d+$/.test(cust)) { kFormMsg('Zadejte platné ID klienta.', 'err'); return; }
-  try {
-    const r = await api(`/api/writeoff/credits/${encodeURIComponent(cust)}`);
-    if (!r.ok) { kFormMsg((r.data && r.data.error) || 'Chyba při načítání půjček', 'err'); return; }
-    const row = document.getElementById('k-chips-row');
-    if (!r.data.credits.length) {
-      row.innerHTML = '<span style="font-size:11px;color:var(--gray)">Klient nemá žádnou půjčku s dluhem.</span>';
-    } else {
-      row.innerHTML = r.data.credits.map(c =>
-        `<button class="wchip" data-action="k-pick-credit" data-credit-id="${esc(c.creditId)}"><b>${esc(c.creditId)}</b><span>${kcFmt(c.debt)} Kč</span></button>`).join('');
-    }
-    document.getElementById('k-chips').style.display = '';
-  } catch (e) { if (e.message !== 'unauth') kFormMsg('Chyba připojení k serveru', 'err'); }
-}
-function kPickCredit(id, el) {
-  document.getElementById('k-cred').value = id;
-  document.querySelectorAll('#k-chips-row .wchip').forEach(c => c.classList.remove('sel'));
-  if (el) el.classList.add('sel');
-}
-
-function kOpenSteps() {
-  const cust = document.getElementById('k-cust').value.trim();
-  const cred = document.getElementById('k-cred').value.trim();
-  const s = kCalcSchedule();
-  if (!/^\d+$/.test(cust) || !/^\d+$/.test(cred)) { kFormMsg('Zadejte platné ID klienta a půjčky.', 'err'); return; }
-  if (!s) { kFormMsg('Vyplňte datum začátku, splátku a celkovou částku kalendáře.', 'err'); return; }
-  if (kReasonId === null) { kFormMsg('Vyberte kategorii blacklistu.', 'err'); return; }
-  kFormMsg('');
-
-  const box = document.getElementById('k-step-toggles');
-  box.innerHTML = Object.keys(K_TOGGLEABLE).map(key => {
-    if (kToggleState[key] === undefined) kToggleState[key] = true;
-    const on = kToggleState[key];
-    const t = K_TOGGLEABLE[key];
-    return `<div class="ktoggle${on ? '' : ' off'}" id="k-tg-${key}" data-action="k-toggle-step" data-key="${esc(key)}">
-      <input type="checkbox" ${on ? 'checked' : ''} data-action="k-toggle-step-checkbox" data-key="${esc(key)}">
-      <span class="kt-lbl">${t.label}</span><span class="stag">${t.tag}</span>
-    </div>`;
-  }).join('');
-  document.getElementById('k-step-modal').classList.add('show');
-}
-function kToggleStep(key) {
-  kToggleState[key] = !kToggleState[key];
-  const el = document.getElementById(`k-tg-${key}`);
-  el.classList.toggle('off', !kToggleState[key]);
-  el.querySelector('input').checked = kToggleState[key];
-}
-function kCloseSteps() { document.getElementById('k-step-modal').classList.remove('show'); }
-
-function kCollectSkipped() {
-  // Posilame TOGGLE KLICE (napr. 'calendar'), ne nazvy kroku - orchestrator
-  // (markSkippedSteps v pipeline/src/orchestrator.js) porovnava prave proti
-  // def.toggleKey, ktery je pro calendar_launch/calendar_confirm shodne
-  // 'calendar' (jeden prepinac sdileny dvema kroky). Puvodni kod tu pro
-  // klic 'calendar' posilal rovnou nazvy kroku 'calendar_launch' a
-  // 'calendar_confirm' - tim se nikdy netrefil do op.skipped.has(toggleKey)
-  // a vypnuti prepinace kalendare se v praxi neprojevilo (ostatni klice
-  // fungovaly, protoze u nich se toggleKey == nazev kroku).
-  const skipped = [];
-  for (const [key, on] of Object.entries(kToggleState)) {
-    if (!on) skipped.push(key);
-  }
-  return skipped;
-}
-
-async function kLaunch() {
-  kCloseSteps();
-  document.getElementById('k-form-card').closest('.wcard').style.display = 'none';
-  document.getElementById('k-progress-card').style.display = '';
-  kRenderSteps({});
-
-  const r = await api('/api/pipeline/start', {
-    method: 'POST',
-    body: JSON.stringify({
-      customerId: document.getElementById('k-cust').value.trim(),
-      creditId: document.getElementById('k-cred').value.trim(),
-      type: kType,
-      blacklistReasonId: kReasonId,
-      targetTotal: document.getElementById('k-target').value.trim().replace(',', '.'),
-      calStartDate: document.getElementById('k-start').value.trim(),
-      calPerPayment: document.getElementById('k-per').value.trim().replace(',', '.'),
-      calTotal: document.getElementById('k-total').value.trim().replace(',', '.'),
-      skippedSteps: kCollectSkipped(),
-    }),
-  });
-  kHandleResult(r);
-}
-
-function kHandleResult(r) {
-  if (!r.ok) { kResultMsg((r.data && r.data.error) || 'Chyba pipeline', 'err'); return; }
-  const d = r.data;
-  kOpId = d.operationId;
-  kRenderSteps(d.steps || {});
-  if (d.status === 'paused') {
-    kCurrentStep = d.waitingFor;
-    kShowCheckpoint(d.waitingFor, d.prompt);
-  } else if (d.status === 'complete') {
-    kHideCheckpoint();
-    kResultMsg('✓ Operace dokončena úspěšně', 'ok');
-  } else if (d.status === 'failed') {
-    kHideCheckpoint();
-    kResultMsg(`Chyba na kroku "${d.failedAt}": ${d.error}`, 'err');
-    if (d.hasCalendarScreenshot) kShowFailureScreenshot();
-  }
-}
-
-function kShowFailureScreenshot() {
-  kLoadScreenshotInto('k-fail-shot');
-}
-
-function kRenderSteps(steps) {
-  document.getElementById('k-steps').innerHTML = K_STEPS.map(s => {
-    const st = steps[s.name] || {};
-    const icon = st.status === 'done' ? '✓' : st.status === 'failed' ? '✗' : st.status === 'skipped' ? '−' : st.status === 'active' ? '↻' : '○';
-    const tag = st.status === 'done' ? 'Hotovo' : st.status === 'failed' ? 'Chyba' : st.status === 'skipped' ? 'Přeskočeno' : st.status === 'active' ? 'Probíhá' : '';
-    return `<div class="stepi"><span class="sn">${icon}</span><span class="sname">${s.label}</span><span class="stag">${tag}</span></div>`;
-  }).join('');
-}
-
-async function kLoadScreenshotInto(imgId) {
-  const img = document.getElementById(imgId);
-  try {
-    const res = await fetch(`/api/pipeline/${kOpId}/calendar-preview.png?t=${Date.now()}`, {
-      headers: { Authorization: 'Bearer ' + token },
-    });
-    if (res.status === 401) { handleUnauth(); return; }
-    if (!res.ok) { img.style.display = 'none'; return; }
-    const blob = await res.blob();
-    if (img.dataset.blobUrl) URL.revokeObjectURL(img.dataset.blobUrl);
-    const url = URL.createObjectURL(blob);
-    img.dataset.blobUrl = url;
-    img.src = url;
-    img.style.display = '';
-  } catch (e) {
-    img.style.display = 'none';
-  }
-}
-
-function kShowCheckpoint(step, prompt) {
-  const box = document.getElementById('k-checkpoint');
-  box.style.display = '';
-  document.getElementById('k-cp-title').textContent = (K_STEPS.find(s => s.name === step) || {}).label || step;
-  document.getElementById('k-cp-desc').textContent = prompt || '';
-  if (step === 'calendar_confirm') {
-    kLoadScreenshotInto('k-cp-shot');
-  } else {
-    document.getElementById('k-cp-shot').style.display = 'none';
-  }
-}
-function kHideCheckpoint() { document.getElementById('k-checkpoint').style.display = 'none'; }
-
-async function kConfirmStep() {
-  kHideCheckpoint();
-  const r = await api(`/api/pipeline/${kOpId}/confirm`, { method: 'POST', body: JSON.stringify({ step: kCurrentStep }) });
-  kHandleResult(r);
-}
-
-function kResultMsg(text, kind) {
-  const el = document.getElementById('k-result-msg');
-  el.style.display = ''; el.textContent = text;
-  el.style.background = kind === 'err' ? 'var(--red-l)' : 'var(--green-l)';
-  el.style.color = kind === 'err' ? 'var(--red)' : 'var(--green)';
-  el.style.borderColor = kind === 'err' ? '#F09595' : '#97C459';
-}
-
-function kReset() {
-  kOpId = null; kCurrentStep = null;
-  document.getElementById('k-progress-card').style.display = 'none';
-  document.getElementById('k-form-card').closest('.wcard').style.display = '';
-  document.getElementById('k-result-msg').style.display = 'none';
-  document.getElementById('k-fail-shot').style.display = 'none';
-  document.getElementById('k-chips').style.display = 'none';
-  kHideCheckpoint();
-}
-
-
 const ACTIONS = {
   'do-pdf-one': () => doPDF(1), 'do-pdf-two': () => doPDF(2), 'close-pdf': () => closePdfModal(),
   login: () => doLogin(), search: () => hledat(), logout: () => doLogout(),
@@ -1396,13 +1105,7 @@ const ACTIONS = {
   'copy-all': () => copyAll(), 'copy-selected': () => copySelected(), reset: () => resetAll(),
   'wo-load-credits': () => woLoadCredits(), 'wo-preview': () => woPreview(), 'wo-reset': () => woReset(),
   'wo-open-confirm': () => woOpenConfirm(), 'wo-close-confirm': () => woCloseConfirm(), 'wo-apply': () => woApply(),
-  'k-load-credits': () => kLoadCredits(), 'k-type-don': () => kSetType('DON'), 'k-type-epr': () => kSetType('EPR'),
-  'k-open-steps': () => kOpenSteps(), 'k-confirm-step': () => kConfirmStep(), 'k-reset': () => kReset(),
-  'k-close-steps': () => kCloseSteps(), 'k-launch': () => kLaunch(),
-  'update-note': () => kUpdateNote(), 'k-pick-reason': el => kPickReason(Number(el.dataset.id)),
-  'wo-pick-credit': el => woPickCredit(el.dataset.creditId, el), 'k-pick-credit': el => kPickCredit(el.dataset.creditId, el),
-  'k-toggle-step': el => kToggleStep(el.dataset.key),
-  'k-toggle-step-checkbox': (el, event) => { event.stopPropagation(); kToggleStep(el.dataset.key); },
+  'wo-pick-credit': el => woPickCredit(el.dataset.creditId, el),
   sort: el => sortBy(el.dataset.key), 'toggle-column': (el, event) => togCol(el.dataset.key, event.target.checked),
   'toggle-column-group': (el, event) => { const [v, u] = el.dataset.key.replace('__g', '').split('|'); hcols[v] = !event.target.checked; hcols[u] = !event.target.checked; render(); },
   'toggle-selected-row': (el, event) => { if (el.matches('input')) event.stopPropagation(); togSelRow(Number(el.dataset.row)); },
@@ -1415,7 +1118,7 @@ const ACTIONS = {
 };
 
 const ACTION_EVENTS = {
-  'update-note': 'input', 'toggle-column': 'change', 'toggle-column-group': 'change',
+  'toggle-column': 'change', 'toggle-column-group': 'change',
   'toggle-row': 'change', 'toggle-chain': 'change', 'edit-value': 'change', 'set-role': 'change',
 };
 document.addEventListener('click', event => {

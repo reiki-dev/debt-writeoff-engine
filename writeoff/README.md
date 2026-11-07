@@ -202,7 +202,7 @@ const result = await applyPlan(plan, { live: true, actor: 'demo_operator' });
 
 `buildPlan` has no side effects: a plan can be built, shown to an operator,
 saved, and applied later. This separation makes the module suitable both as a
-pipeline step and as a standalone screen.
+web route and as a standalone screen.
 
 `computePlan` applies the same logic as a pure function of an existing `Balance`,
 without network access. It is useful for tests and recalculating a plan from

@@ -52,7 +52,7 @@ test('protected routes reject absent and invalid bearer tokens', async () => {
 
 test('RBAC enforces mail, cc and admin route access', async () => {
   const mail = await tokenFor(byRole('mail'));
-  for (const url of ['/api/writeoff/credits/1001', '/api/pipeline/not-real/status']) {
+  for (const url of ['/api/writeoff/credits/1001']) {
     assert.equal((await request.get(url).set(auth(mail))).status, 403, url);
   }
   const cc = await tokenFor(byRole('cc'));
@@ -60,7 +60,7 @@ test('RBAC enforces mail, cc and admin route access', async () => {
     assert.equal((await request.get(url).set(auth(cc))).status, 403, url);
   }
   const admin = await tokenFor(byRole('admin'));
-  for (const [method, url] of [['get', '/api/client/1001'], ['get', '/api/users'], ['get', '/api/writeoff/credits/1001'], ['get', '/api/pipeline/not-real/status']]) {
+  for (const [method, url] of [['get', '/api/client/1001'], ['get', '/api/users'], ['get', '/api/writeoff/credits/1001']]) {
     const response = await request[method](url).set(auth(admin));
     assert.notEqual(response.status, 403, url);
   }

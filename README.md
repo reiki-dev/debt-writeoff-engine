@@ -24,7 +24,7 @@ Open <http://localhost:3000> and sign in:
 | User | Password | Role |
 |---|---|---|
 | `admin` | `admin123` | everything |
-| `operator` | `operator123` | write-off, settlement pipeline |
+| `operator` | `operator123` | write-off |
 | `viewer` | `viewer123` | read-only loan overview |
 
 These accounts come from `users.demo.json` and are created on first start; change them before any real use (`npm run add-user`).
@@ -148,7 +148,6 @@ flowchart TD
 | Write-off core and CLI | `writeoff/` | the main piece; fully unit-tested |
 | Web server, auth, RBAC, UI | `server.js`, `access.js`, `public/` | covered by HTTP tests in mock mode |
 | Loan overview report | `server.js`, `mock-crm.js` | read-only report, see limitations |
-| Settlement pipeline | `pipeline/` | **experimental**, see limitations |
 
 ---
 
@@ -175,10 +174,9 @@ Docker:
 ```bash
 docker compose up --build                      # demo on http://localhost:3001, no .env needed
 docker compose --profile app up --build app    # real config from .env, users in ./data
-docker compose --profile pipeline up --build pipeline   # adds Chromium and the Google key mount
 ```
 
-The `audit/` folder is mounted so the append-only log survives rebuilds. Chromium is installed only for the `pipeline` profile. User accounts live in `users.json`, which is git-ignored and created from `users.demo.json` on first start.
+The `audit/` folder is mounted so the append-only log survives rebuilds. User accounts live in `users.json`, which is git-ignored and created from `users.demo.json` on first start.
 
 ---
 
@@ -189,7 +187,7 @@ npm run check       # eslint + BOM check + all tests
 npm run coverage    # c8 coverage report
 ```
 
-Tests use only `node:test` and `supertest`; they run offline against synthetic data. They cover the money module, the waterfall, the guards, apply/audit/verification, the HTTP layer (login, RBAC matrix, per-request role lookup, `plan_changed`, audit order, last-admin guard) and the pipeline's schedule arithmetic (month-end clamping, leap years, exact remainder in the last payment).
+Tests use only `node:test` and `supertest`; they run offline against synthetic data. They cover the money module, the waterfall, the guards, apply/audit/verification, and the HTTP layer (login, RBAC matrix, per-request role lookup, `plan_changed`, audit order, last-admin guard).
 
 CI runs lint, the BOM check and the tests on Node 18, 20 and 22.
 
@@ -199,10 +197,8 @@ CI runs lint, the BOM check and the tests on Node 18, 20 and 22.
 
 Stated up front, because they are the first things a reviewer would find.
 
-- **`pipeline/` is experimental.** The 10-step settlement flow, including the headless-browser step that fills a legacy form, contains parameters and selectors that are marked as unverified guesses in the code. Its state is in memory, so a crash between steps loses the operator's context. Pipeline snapshots in `audit/pipeline.jsonl` show the last saved step after a restart; they do not support resuming the operation. Treat it as a prototype.
-- **Audit index lives in memory.** The idempotency lookup is O(1) after the first read of the JSONL log, which assumes a single writer process; a multi-instance deployment would need a shared store such as SQLite.
 - **Styles are still inline.** Scripts are served from `/app.js` with delegated handlers, so `script-src` has no `'unsafe-inline'`; `style-src` keeps it until the page's inline styles are moved out.
-- **One process, JSON user store, JSONL audit.** Right-sized for a handful of operators; not a multi-instance design.
+- **One process, JSON user store, JSONL audit.** Right-sized for a handful of operators. The idempotency index is held in memory and assumes a single writer; a multi-instance deployment would move users and audit to a shared store such as SQLite.
 - **UI language.** The interface is in Czech, the code and docs are in English.
 
 ---
@@ -211,7 +207,6 @@ Stated up front, because they are the first things a reviewer would find.
 
 ```
 writeoff/        core: money, waterfall, guards, plan, apply, audit, CLI, tests
-pipeline/        experimental settlement flow (schedule, CRM calls, sheets, browser form)
 public/          single-page UI (index.html) and esc.js
 server.js        Express app: auth, RBAC, routes
 access.js        role -> capability table

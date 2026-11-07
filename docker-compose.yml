@@ -1,9 +1,6 @@
 services:
   demo:
-    build:
-      context: .
-      args:
-        WITH_BROWSER: "false"
+    build: .
     command: ["node", "scripts/start-demo.js"]
     environment:
       PORT: "3000"
@@ -16,10 +13,7 @@ services:
   # Start with --profile app; this service requires a populated .env file.
   app:
     profiles: ["app"]
-    build:
-      context: .
-      args:
-        WITH_BROWSER: "false"
+    build: .
     env_file: .env
     command: ["node", "server.js"]
     environment:
@@ -29,24 +23,3 @@ services:
     volumes:
       - ./data:/app/data
       - ./audit:/app/audit
-
-  # Start with --profile pipeline; this service requires a populated .env file.
-  pipeline:
-    profiles: ["pipeline"]
-    build:
-      context: .
-      args:
-        WITH_BROWSER: "true"
-    env_file: .env
-    command: ["node", "server.js"]
-    environment:
-      USERS_FILE: /app/data/users.json
-      GOOGLE_APPLICATION_CREDENTIALS: /app/google-service-account.json
-    ports:
-      - "127.0.0.1:3001:3000"
-    shm_size: 1gb
-    volumes:
-      - ./data:/app/data
-      - ./audit:/app/audit
-      # Create this service-account file on the host before starting this service.
-      - ./google-service-account.json:/app/google-service-account.json:ro

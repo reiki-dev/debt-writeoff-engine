@@ -21,12 +21,6 @@ module.exports = [
     },
   },
   {
-    files: ['pipeline/src/calendarForm.js'],
-    languageOptions: {
-      globals: { ...globals.node, ...globals.browser },
-    },
-  },
-  {
     files: ['public/**/*.js'],
     languageOptions: {
       globals: { ...globals.browser, module: 'readonly' },

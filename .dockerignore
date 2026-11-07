@@ -9,5 +9,4 @@ coverage
 .git
 .gitignore
 README.md
-# Google service-account credentials are mounted only for the pipeline service.
 google-service-account.json

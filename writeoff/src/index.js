@@ -1,6 +1,6 @@
 'use strict';
 
-// Public module interface used by the pipeline and web route.
+// Public module interface used by the web route.
 
 const { config, assertUsable } = require('./config');
 const buckets = require('./buckets');

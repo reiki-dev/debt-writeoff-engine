@@ -17,13 +17,12 @@
 const CAPS = {
   PREHLED: 'prehled',     // view customer loans (read-only)
   WRITEOFF: 'writeoff',   // write off debt — writes to CRM
-  PIPELINE: 'pipeline',   // payment schedule (in development)
   USERS: 'users',         // user management and debug route
 };
 
 const ROLE_CAPS = {
-  admin: [CAPS.PREHLED, CAPS.WRITEOFF, CAPS.PIPELINE, CAPS.USERS],
-  cc: [CAPS.WRITEOFF, CAPS.PIPELINE],
+  admin: [CAPS.PREHLED, CAPS.WRITEOFF, CAPS.USERS],
+  cc: [CAPS.WRITEOFF],
   mail: [CAPS.PREHLED],
 };
 

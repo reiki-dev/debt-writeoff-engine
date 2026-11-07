@@ -216,29 +216,6 @@ td.wdash{color:#B6BCC6;text-align:right}
 .rolesel{height:28px;padding:0 8px;border:1px solid var(--gray-b);border-radius:6px;background:var(--white);font-family:inherit;font-size:11.5px;color:var(--text)}
 .mono{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace}
 .rolechip{background:rgba(255,255,255,.16);color:#fff;border:1px solid rgba(255,255,255,.28);border-radius:20px;padding:2px 9px;font-size:10px;font-weight:700;letter-spacing:.05em}
-.steps{display:flex;flex-direction:column;gap:6px}
-.stepi{display:flex;align-items:center;gap:11px;padding:9px 12px;border:1px solid var(--gray-b);border-radius:var(--radius);background:#FCFCFD}
-.stepi .sn{width:20px;font-size:10px;font-weight:700;color:var(--gray);font-variant-numeric:tabular-nums}
-.stepi .sname{flex:1;font-size:12px}
-.stepi .stag{font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--gray);border:1px solid var(--gray-b);border-radius:4px;padding:1px 6px;background:var(--white)}
-.stepi.shared{border-color:#A9A3E0;background:var(--purple-l)}
-.stepi.shared .sname{color:var(--purple);font-weight:600}
-.stepi.shared .stag{border-color:#A9A3E0;color:var(--purple)}
-
-.kcheckpoint{background:var(--amber-l);border:1px solid var(--amber-m);border-radius:var(--radius);padding:14px 16px;margin-top:10px}
-.kcheckpoint h4{font-size:13px;color:var(--amber);margin-bottom:6px}
-.kcheckpoint p{font-size:12px;color:var(--text-s);margin-bottom:4px}
-.kreasons{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
-.kreason{padding:10px;border:1px solid var(--gray-b);border-radius:var(--radius);background:var(--white);cursor:pointer;font-size:12px;text-align:left;font-family:inherit}
-.kreason:hover{border-color:var(--blue-m)}
-.kreason.sel{border-color:var(--blue-m);background:var(--blue-l);color:var(--blue-d)}
-.kreason b{display:block;font-size:10px;color:var(--gray);margin-bottom:2px;font-weight:600}
-.kreason.sel b{color:var(--blue-d)}
-.knote-preview{background:var(--gray-l);border:1px solid var(--gray-b);border-radius:var(--radius);padding:9px 11px;font-size:12px;font-family:ui-monospace,Consolas,monospace;min-height:34px;word-break:break-word;color:var(--text)}
-.kshot{max-width:100%;border:1px solid var(--gray-b);border-radius:var(--radius);margin-top:10px;display:block}
-.ktoggle{display:flex;align-items:center;gap:9px;padding:8px 10px;border:1px solid var(--gray-b);border-radius:var(--radius);margin-bottom:6px;cursor:pointer;background:var(--white)}
-.ktoggle.off{opacity:.45;background:var(--gray-l)}
-.ktoggle .kt-lbl{flex:1;font-size:12px}
 
 @media print{
   @page { size: A4 landscape; margin: 6mm 8mm; }
@@ -519,107 +496,6 @@ td.wdash{color:#B6BCC6;text-align:right}
     </div>
    </div>
 
-   <!-- ═══════════════ Splátkový kalendář ═══════════════ -->
-   <div class="pane" id="pane-kalendar">
-    <div class="wcard">
-      <div class="wcard-hd">
-        <span class="wcard-ttl">Splátkový kalendář — pipeline</span>
-        <span class="wcard-note">Odpis je jedním z kroků a použije stejný modul jako Odpis dluhu</span>
-      </div>
-      <div class="wcard-bd" id="k-form-card">
-        <div class="wfields">
-          <div class="wf">
-            <label for="k-cust">ID klienta</label>
-            <input id="k-cust" type="text" inputmode="numeric" placeholder="1001" />
-          </div>
-          <div class="wf">
-            <label for="k-cred">ID půjčky</label>
-            <input id="k-cred" type="text" inputmode="numeric" placeholder="2001" />
-          </div>
-          <button class="btn" id="k-credits-btn" data-action="k-load-credits">
-            <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-            Najít půjčky
-          </button>
-        </div>
-        <div class="wchips" id="k-chips" style="display:none">
-          <span class="wchips-lbl">Půjčky klienta s dluhem</span>
-          <div class="wchips-row" id="k-chips-row"></div>
-        </div>
-
-        <div class="wfields" style="margin-top:14px">
-          <div class="wf">
-            <label>Typ dohody</label>
-            <div style="display:flex;gap:8px">
-              <button class="btn act" id="k-type-don" data-action="k-type-don" style="width:80px;justify-content:center">DoN</button>
-              <button class="btn" id="k-type-epr" data-action="k-type-epr" style="width:80px;justify-content:center">EPR</button>
-            </div>
-          </div>
-          <div class="wf">
-            <label for="k-target">Cílový zůstatek pro odpis (Kč)</label>
-            <input id="k-target" type="text" inputmode="decimal" placeholder="0" />
-            <span class="whint">Kolik dluhu má po odpisu zůstat</span>
-          </div>
-        </div>
-
-        <div class="wfields" style="margin-top:14px">
-          <div class="wf">
-            <label for="k-start">Datum začátku</label>
-            <input id="k-start" type="text" placeholder="2026-06-22" data-action="update-note" />
-            <span class="whint">Formát: YYYY-MM-DD</span>
-          </div>
-          <div class="wf">
-            <label for="k-per">Splátka za měsíc (Kč)</label>
-            <input id="k-per" type="text" inputmode="decimal" placeholder="500" data-action="update-note" />
-          </div>
-          <div class="wf">
-            <label for="k-total">Celková částka kalendáře (Kč)</label>
-            <input id="k-total" type="text" inputmode="decimal" placeholder="25000" data-action="update-note" />
-          </div>
-        </div>
-
-        <div class="wf" style="margin-top:14px">
-          <label>Poznámka (generuje se automaticky, finální text počítá server)</label>
-          <div class="knote-preview" id="k-note-preview">Vyplňte datum, splátku a částku…</div>
-        </div>
-
-        <div class="wf" style="margin-top:14px">
-          <label>Kategorie blacklistu</label>
-          <div class="kreasons" id="k-reasons"></div>
-        </div>
-
-        <div class="banner" id="k-form-msg" style="display:none;margin-top:12px"></div>
-
-        <div class="wactbar" style="border-top:none;padding:14px 0 0">
-          <span class="wsp"></span>
-          <button class="btn wo-btn" data-action="k-open-steps">Vybrat kroky a spustit</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="wcard" id="k-progress-card" style="display:none">
-      <div class="wcard-hd"><span class="wcard-ttl">Průběh operace</span></div>
-      <div class="wcard-bd">
-        <div class="steps" id="k-steps"></div>
-
-        <div class="kcheckpoint" id="k-checkpoint" style="display:none">
-          <h4 id="k-cp-title"></h4>
-          <p id="k-cp-desc"></p>
-          <img id="k-cp-shot" class="kshot" style="display:none" alt="Náhled formuláře kalendáře" />
-          <button class="btn" style="background:var(--amber);color:#fff;border-color:var(--amber);margin-top:10px" data-action="k-confirm-step">✓ Potvrzuji</button>
-        </div>
-
-        <div class="banner" id="k-result-msg" style="display:none;margin-top:12px"></div>
-        <img id="k-fail-shot" class="kshot" style="display:none" alt="Screenshot v okamžiku chyby" />
-
-        <div class="wactbar" style="border-top:none;padding:14px 0 0">
-          <span class="wsp"></span>
-          <button class="btn" data-action="k-reset">← Nová operace</button>
-        </div>
-      </div>
-    </div>
-   </div>
-
-   <!-- ═══════════════ Uživatelé ═══════════════ -->
    <div class="pane" id="pane-uziv">
     <div class="wcard">
       <div class="wcard-hd">
@@ -653,21 +529,6 @@ td.wdash{color:#B6BCC6;text-align:right}
       <button class="btn wo-btn" id="w-confirm-btn" data-action="wo-apply">
         <span id="w-confirm-lbl">Odepsat</span>
       </button>
-    </div>
-  </div>
-</div>
-
-<!-- ═══ Výběr kroků pipeline ═══ -->
-<div class="wmodal-ovl" id="k-step-modal">
-  <div class="wmodal" role="dialog" aria-modal="true" aria-labelledby="k-step-modal-ttl">
-    <div class="wmodal-hd">
-      <h3 id="k-step-modal-ttl">Výběr kroků</h3>
-      <p>Vypněte kroky, které v této operaci nejsou potřeba</p>
-    </div>
-    <div class="wmodal-bd" id="k-step-toggles"></div>
-    <div class="wmodal-ft">
-      <button class="btn" data-action="k-close-steps">Zrušit</button>
-      <button class="btn wo-btn" data-action="k-launch">Spustit</button>
     </div>
   </div>
 </div>
